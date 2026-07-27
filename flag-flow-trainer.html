@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flag Flow — 5v5 Playbook Trainer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Kalam:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+
+  :root{
+    --board:#1c3d31;
+    --board-dark:#153029;
+    --chalk:#f2ede1;
+    --chalk-dim:#c9c2ae;
+    --off-red:#e2544a;
+    --def-blue:#5b9bd1;
+    --flag-gold:#e3b23c;
+    --line-white:#ffffff55;
+    --panel:#0f2620;
+    --panel-line:#2f5346;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    margin:0;
+    background: radial-gradient(circle at 30% 10%, #24463a, #0f2620 70%);
+    font-family:'Inter',sans-serif;
+    color:var(--chalk);
+    padding:24px;
+    min-height:100vh;
+  }
+
+  .wrap{ max-width:960px; margin:0 auto; }
+
+  header{ margin-bottom:18px; }
+  h1{
+    font-family:'Permanent Marker', cursive;
+    font-size:2.1rem;
+    letter-spacing:0.5px;
+    margin:0 0 4px 0;
+    color:var(--chalk);
+    text-shadow: 0 0 14px rgba(242,237,225,0.15);
+  }
+  .subtitle{
+    font-family:'Kalam',cursive;
+    color:var(--chalk-dim);
+    font-size:1.05rem;
+    margin:0;
+  }
+
+  .tabs-row{ display:flex; flex-wrap:wrap; gap:10px; margin:16px 0 10px 0; }
+  .tab-group{ display:flex; gap:6px; align-items:center; }
+  .tab-label{
+    font-family:'Kalam',cursive;
+    font-size:0.85rem;
+    color:var(--chalk-dim);
+    margin-right:4px;
+    white-space:nowrap;
+  }
+  .tab{
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:0.82rem;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    color:var(--chalk-dim);
+    padding:7px 13px;
+    border-radius:20px;
+    cursor:pointer;
+    transition:all .15s ease;
+  }
+  .tab:hover{ border-color:var(--flag-gold); color:var(--chalk); }
+  .tab.active{
+    background:var(--flag-gold);
+    color:#2a1d05;
+    border-color:var(--flag-gold);
+  }
+
+  .board-shell{
+    background:var(--board);
+    border-radius:14px;
+    padding:14px;
+    box-shadow: inset 0 0 60px rgba(0,0,0,0.35), 0 10px 30px rgba(0,0,0,0.4);
+    border:1px solid #0a1e17;
+    position:relative;
+  }
+
+  svg{ display:block; width:100%; height:auto; }
+
+  .info-bar{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:16px;
+    margin-top:12px;
+    padding:12px 14px;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:10px;
+    flex-wrap:wrap;
+  }
+  .play-desc{ font-size:0.85rem; color:var(--chalk-dim); max-width:520px; line-height:1.45; }
+  .play-desc b{ color:var(--chalk); font-family:'Kalam',cursive; font-size:1rem; }
+  .phase-badge{
+    font-family:'Kalam',cursive;
+    font-size:0.95rem;
+    background:rgba(227,178,60,0.12);
+    border:1px solid rgba(227,178,60,0.4);
+    color:var(--flag-gold);
+    padding:6px 14px;
+    border-radius:8px;
+    white-space:nowrap;
+    height:fit-content;
+  }
+
+  .controls{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-top:14px;
+    flex-wrap:wrap;
+  }
+  .btn{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    color:var(--chalk);
+    width:38px; height:38px;
+    border-radius:50%;
+    cursor:pointer;
+    font-size:1rem;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .15s ease;
+  }
+  .btn:hover{ border-color:var(--flag-gold); }
+  .btn.primary{
+    background:var(--flag-gold);
+    color:#2a1d05;
+    border-color:var(--flag-gold);
+    width:44px; height:44px;
+    font-size:1.1rem;
+  }
+  .scrub{
+    flex:1;
+    min-width:140px;
+    accent-color: var(--flag-gold);
+  }
+  .speed-select{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    color:var(--chalk-dim);
+    border-radius:8px;
+    padding:6px 8px;
+    font-family:'Inter',sans-serif;
+    font-size:0.8rem;
+  }
+
+  .legend{
+    display:flex; gap:18px; margin-top:10px; flex-wrap:wrap;
+    font-size:0.78rem; color:var(--chalk-dim);
+  }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .swatch{ width:12px; height:12px; border-radius:50%; display:inline-block; }
+
+  footer{
+    text-align:center;
+    color:var(--chalk-dim);
+    font-size:0.72rem;
+    margin-top:18px;
+    opacity:0.6;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Flag Flow</h1>
+    <p class="subtitle">5-on-5 playbook trainer — watch the play unfold, snap to whistle.</p>
+  </header>
+
+  <div class="tabs-row">
+    <div class="tab-group">
+      <span class="tab-label">OFFENSE</span>
+      <div id="playTabs"></div>
+    </div>
+    <div class="tab-group">
+      <span class="tab-label">DEFENSE</span>
+      <div id="defenseTabs"></div>
+    </div>
+  </div>
+
+  <div class="board-shell">
+    <svg id="field" viewBox="0 0 900 500" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <div class="info-bar">
+    <div class="play-desc" id="playDesc"></div>
+    <div class="phase-badge" id="phaseBadge">Pre-snap</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn" id="resetBtn" title="Reset">⟲</button>
+    <button class="btn" id="stepBackBtn" title="Step back">◁</button>
+    <button class="btn primary" id="playBtn" title="Play/Pause">▶</button>
+    <button class="btn" id="stepFwdBtn" title="Step forward">▷</button>
+    <input type="range" class="scrub" id="scrub" min="0" max="1000" value="0">
+    <select class="speed-select" id="speedSelect">
+      <option value="0.35">Slow</option>
+      <option value="0.7" selected>Normal</option>
+      <option value="1.2">Fast</option>
+    </select>
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--off-red)"></i> Offense</span>
+    <span><i class="swatch" style="background:var(--def-blue)"></i> Defense</span>
+    <span><i class="swatch" style="background:var(--flag-gold)"></i> Ball / read</span>
+  </div>
+
+  <footer>Prototype teaching tool — canned plays &amp; coverages, built to expand later.</footer>
+</div>
+
+<script>
+(function(){
+
+  // ---------- geometry helpers ----------
+  function getPosAtT(waypoints, t){
+    if (t <= waypoints[0].t) return {x:waypoints[0].x, y:waypoints[0].y};
+    const last = waypoints[waypoints.length-1];
+    if (t >= last.t) return {x:last.x, y:last.y};
+    for (let i=0;i<waypoints.length-1;i++){
+      const a = waypoints[i], b = waypoints[i+1];
+      if (t >= a.t && t <= b.t){
+        const span = (b.t - a.t) || 1;
+        const local = (t - a.t) / span;
+        return { x: a.x + (b.x-a.x)*local, y: a.y + (b.y-a.y)*local };
+      }
+    }
+    return {x:last.x, y:last.y};
+  }
+  function pathFromWaypoints(waypoints){
+    return waypoints.map((w,i)=> i===0 ? `M ${w.x} ${w.y}` : `L ${w.x} ${w.y}`).join(' ');
+  }
+
+  // ---------- data: offensive alignment & plays ----------
+  const offenseStart = {
+    QB:  {x:210, y:250},
+    C:   {x:250, y:250},
+    WR_L:{x:250, y:110},
+    WR_S:{x:250, y:310},
+    WR_R:{x:250, y:400}
+  };
+
+  const PLAYS = {
+    slantFlat: {
+      name:'Slant-Flat',
+      desc:'<b>Slant-Flat.</b> Quick-hitting concept — the slot receiver runs a slant to occupy the middle while the outside receiver settles in the flat. QB reads slant first, flat second, checks down to the center underneath.',
+      routes:{
+        QB:  [{t:0,x:210,y:250},{t:0.3,x:190,y:265},{t:1,x:190,y:265}],
+        C:   [{t:0,x:250,y:250},{t:0.5,x:255,y:250},{t:0.75,x:300,y:250},{t:1,x:340,y:255}],
+        WR_L:[{t:0,x:250,y:110},{t:1,x:520,y:85}],
+        WR_S:[{t:0,x:250,y:310},{t:0.4,x:300,y:255},{t:1,x:470,y:230}],
+        WR_R:[{t:0,x:250,y:400},{t:0.5,x:330,y:380},{t:1,x:420,y:370}]
+      },
+      reads:[
+        {t:0.30, label:'1st Read — Slant', target:'WR_S'},
+        {t:0.58, label:'2nd Read — Flat', target:'WR_R'},
+        {t:0.82, label:'Checkdown', target:'C'}
+      ],
+      throw:{ t0:0.42, t1:0.5, from:'QB', to:'WR_S' }
+    },
+    fourVerts: {
+      name:'Switch Verts',
+      desc:'<b>Switch Verts.</b> All three receivers push vertically to stretch the defense deep, with the center releasing late as a safety valve. QB reads outside-in: left go route first, then the seam, then the checkdown.',
+      routes:{
+        QB:  [{t:0,x:210,y:250},{t:0.3,x:180,y:250},{t:1,x:180,y:250}],
+        C:   [{t:0,x:250,y:250},{t:0.55,x:255,y:250},{t:0.8,x:380,y:250},{t:1,x:480,y:255}],
+        WR_L:[{t:0,x:250,y:110},{t:1,x:700,y:130}],
+        WR_S:[{t:0,x:250,y:310},{t:0.35,x:330,y:260},{t:1,x:700,y:220}],
+        WR_R:[{t:0,x:250,y:400},{t:1,x:700,y:380}]
+      },
+      reads:[
+        {t:0.30, label:'1st Read — Go (L)', target:'WR_L'},
+        {t:0.55, label:'2nd Read — Seam', target:'WR_S'},
+        {t:0.82, label:'Checkdown', target:'C'}
+      ],
+      throw:{ t0:0.58, t1:0.68, from:'QB', to:'WR_L' }
+    }
+  };
+
+  const DEFENSES = {
+    cover2: {
+      name:'Cover 2',
+      desc:'Two deep safeties split the field, three underneath defenders squeeze the short zones and drift with route flow.',
+      routes:{
+        CB_L:[{t:0,x:310,y:110},{t:1,x:430,y:100}],
+        CB_R:[{t:0,x:310,y:400},{t:1,x:430,y:390}],
+        NB:  [{t:0,x:330,y:300},{t:1,x:395,y:270}],
+        S1:  [{t:0,x:420,y:180},{t:1,x:520,y:130}],
+        S2:  [{t:0,x:420,y:330},{t:1,x:520,y:370}]
+      }
+    },
+    manFree: {
+      name:'Man-Free',
+      desc:'Tight man coverage on each receiver with one free defender spying the middle of the field and a rusher bearing down after the count.',
+      routes:{
+        CB_L:[{t:0,x:280,y:110},{t:1,x:640,y:135}],
+        CB_R:[{t:0,x:280,y:400},{t:1,x:640,y:385}],
+        NB:  [{t:0,x:290,y:300},{t:0.4,x:320,y:260},{t:1,x:600,y:245}],
+        RUSH:[{t:0,x:270,y:250},{t:0.5,x:230,y:255},{t:1,x:200,y:260}],
+        FS:  [{t:0,x:400,y:250},{t:1,x:470,y:220}]
+      }
+    }
+  };
+
+  // ---------- state ----------
+  let currentPlay = 'slantFlat';
+  let currentDefense = 'cover2';
+  let t = 0;            // 0..1
+  let playing = false;
+  let lastTs = null;
+  let speed = 0.7;       // "t units" per second
+
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.getElementById('field');
+
+  function el(tag, attrs){
+    const e = document.createElementNS(svgNS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // ---------- static field ----------
+  function drawField(){
+    svg.innerHTML = '';
+    // field backdrop stripes
+    for (let i=0;i<12;i++){
+      const x = 50 + i*(700/12);
+      svg.appendChild(el('rect',{x:x,y:50,width:700/12,height:400,
+        fill: i%2===0 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.05)'}));
+    }
+    // sidelines
+    svg.appendChild(el('rect',{x:50,y:50,width:700,height:400,fill:'none',stroke:'var(--line-white)','stroke-width':2}));
+    // yard lines
+    for (let i=1;i<12;i++){
+      const x = 50 + i*(700/12);
+      svg.appendChild(el('line',{x1:x,y1:50,x2:x,y2:450,stroke:'var(--line-white)','stroke-width':1}));
+    }
+    // line of scrimmage
+    svg.appendChild(el('line',{x1:250,y1:50,x2:250,y2:450,stroke:'var(--flag-gold)','stroke-width':2,'stroke-dasharray':'6,4','opacity':0.7}));
+    svg.appendChild(el('text',{x:250,y:40,fill:'var(--flag-gold)','font-size':11,'text-anchor':'middle','font-family':'Kalam, cursive'})).textContent = 'LOS';
+    // no-rush arc (5 yd) — decorative
+    svg.appendChild(el('path',{d:'M 250 50 A 40 40 0 0 0 250 450',
+      fill:'none', stroke:'var(--line-white)','stroke-width':1,'stroke-dasharray':'3,4', transform:'translate(0,0)'}));
+  }
+
+  // ---------- route preview layer ----------
+  let routeLayer, playerLayer, ballLayer, readLayer;
+
+  function buildLayers(){
+    routeLayer = el('g',{id:'routes'}); svg.appendChild(routeLayer);
+    readLayer  = el('g',{id:'reads'});  svg.appendChild(readLayer);
+    ballLayer  = el('g',{id:'ball'});   svg.appendChild(ballLayer);
+    playerLayer= el('g',{id:'players'});svg.appendChild(playerLayer);
+  }
+
+  function drawRoutePreviews(){
+    routeLayer.innerHTML = '';
+    const play = PLAYS[currentPlay];
+    const def = DEFENSES[currentDefense];
+    Object.keys(play.routes).forEach(key=>{
+      if (key === 'QB') return; // don't show QB drop as a "route"
+      const p = el('path',{d:pathFromWaypoints(play.routes[key]), fill:'none',
+        stroke:'var(--off-red)','stroke-width':2,'stroke-dasharray':'5,5','opacity':0.35});
+      routeLayer.appendChild(p);
+    });
+    Object.keys(def.routes).forEach(key=>{
+      const p = el('path',{d:pathFromWaypoints(def.routes[key]), fill:'none',
+        stroke:'var(--def-blue)','stroke-width':2,'stroke-dasharray':'2,5','opacity':0.3});
+      routeLayer.appendChild(p);
+    });
+  }
+
+  const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y'};
+  const DEF_LABELS = {CB_L:'C', CB_R:'C', NB:'N', S1:'S', S2:'S', RUSH:'R', FS:'F'};
+
+  function drawPlayers(){
+    playerLayer.innerHTML = '';
+    const play = PLAYS[currentPlay];
+    const def = DEFENSES[currentDefense];
+
+    Object.keys(play.routes).forEach(key=>{
+      const pos = getPosAtT(play.routes[key], t);
+      const g = el('g',{});
+      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:14, fill:'var(--off-red)', stroke:'#2a0a08','stroke-width':1.5}));
+      const txt = el('text',{x:pos.x, y:pos.y+4, 'text-anchor':'middle','font-size':11,'font-weight':700,fill:'#fff','font-family':'Inter,sans-serif'});
+      txt.textContent = OFF_LABELS[key] || key;
+      g.appendChild(txt);
+      playerLayer.appendChild(g);
+    });
+
+    Object.keys(def.routes).forEach(key=>{
+      const pos = getPosAtT(def.routes[key], t);
+      const g = el('g',{});
+      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:13, fill:'none', stroke:'var(--def-blue)','stroke-width':3}));
+      const txt = el('text',{x:pos.x, y:pos.y+4, 'text-anchor':'middle','font-size':10,'font-weight':700,fill:'var(--def-blue)','font-family':'Inter,sans-serif'});
+      txt.textContent = DEF_LABELS[key] || key;
+      g.appendChild(txt);
+      playerLayer.appendChild(g);
+    });
+  }
+
+  function drawBall(){
+    ballLayer.innerHTML = '';
+    const play = PLAYS[currentPlay];
+    const th = play.throw;
+    if (!th) return;
+    if (t < th.t0){
+      // ball with QB
+      const qbPos = getPosAtT(play.routes.QB, t);
+      ballLayer.appendChild(el('circle',{cx:qbPos.x+10, cy:qbPos.y, r:4, fill:'var(--flag-gold)'}));
+    } else if (t <= th.t1){
+      const local = (t - th.t0) / (th.t1 - th.t0 || 1);
+      const fromPos = getPosAtT(play.routes[th.from], th.t0);
+      const toPos = getPosAtT(play.routes[th.to], th.t1);
+      const bx = fromPos.x + (toPos.x - fromPos.x) * local;
+      const by = fromPos.y + (toPos.y - fromPos.y) * local - Math.sin(local*Math.PI)*30;
+      ballLayer.appendChild(el('circle',{cx:bx, cy:by, r:5, fill:'var(--flag-gold)', stroke:'#7a5c12','stroke-width':1}));
+    } else {
+      const pos = getPosAtT(play.routes[th.to], t);
+      ballLayer.appendChild(el('circle',{cx:pos.x-16, cy:pos.y, r:4, fill:'var(--flag-gold)'}));
+    }
+  }
+
+  function drawReadBadge(){
+    readLayer.innerHTML = '';
+    const play = PLAYS[currentPlay];
+    let active = null;
+    for (const r of play.reads){
+      if (t >= r.t) active = r;
+    }
+    if (!active) return;
+    const pos = getPosAtT(play.routes[active.target], Math.max(t, active.t));
+    const label = active.label;
+    const w = Math.max(70, label.length*6.2);
+    const g = el('g',{opacity:0.95});
+    g.appendChild(el('rect',{x:pos.x-w/2, y:pos.y-38, width:w, height:20, rx:10,
+      fill:'rgba(227,178,60,0.15)', stroke:'var(--flag-gold)','stroke-width':1}));
+    const txt = el('text',{x:pos.x, y:pos.y-24, 'text-anchor':'middle','font-size':10.5,
+      'font-family':'Kalam, cursive', fill:'var(--flag-gold)'});
+    txt.textContent = label;
+    g.appendChild(txt);
+    readLayer.appendChild(g);
+  }
+
+  function updatePhaseBadge(){
+    const play = PLAYS[currentPlay];
+    const badge = document.getElementById('phaseBadge');
+    if (t <= 0.02) { badge.textContent = 'Pre-snap'; return; }
+    if (t >= 0.98) { badge.textContent = 'Play over'; return; }
+    let active = null;
+    for (const r of play.reads){ if (t >= r.t) active = r; }
+    const th = play.throw;
+    if (th && t >= th.t0 && t <= th.t1){ badge.textContent = 'Ball in the air'; return; }
+    if (th && t > th.t1){ badge.textContent = 'Yards after catch'; return; }
+    badge.textContent = active ? active.label : 'Snap!';
+  }
+
+  function render(){
+    drawPlayers();
+    drawBall();
+    drawReadBadge();
+    updatePhaseBadge();
+    document.getElementById('scrub').value = Math.round(t*1000);
+  }
+
+  function setPlay(key){
+    currentPlay = key;
+    t = 0; playing = false;
+    document.getElementById('playBtn').textContent = '▶';
+    document.getElementById('playDesc').innerHTML = PLAYS[key].desc;
+    document.querySelectorAll('#playTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
+    drawRoutePreviews();
+    render();
+  }
+
+  function setDefense(key){
+    currentDefense = key;
+    document.querySelectorAll('#defenseTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
+    drawRoutePreviews();
+    render();
+  }
+
+  function buildTabs(){
+    const playTabs = document.getElementById('playTabs');
+    Object.keys(PLAYS).forEach(key=>{
+      const b = document.createElement('button');
+      b.className = 'tab'; b.textContent = PLAYS[key].name; b.dataset.key = key;
+      b.onclick = ()=> setPlay(key);
+      playTabs.appendChild(b);
+    });
+    const defTabs = document.getElementById('defenseTabs');
+    Object.keys(DEFENSES).forEach(key=>{
+      const b = document.createElement('button');
+      b.className = 'tab'; b.textContent = DEFENSES[key].name; b.dataset.key = key;
+      b.onclick = ()=> setDefense(key);
+      defTabs.appendChild(b);
+    });
+  }
+
+  // ---------- playback loop ----------
+  function tick(ts){
+    if (!playing) { lastTs = null; return; }
+    if (lastTs === null) lastTs = ts;
+    const dt = (ts - lastTs) / 1000;
+    lastTs = ts;
+    t += dt * speed;
+    if (t >= 1){ t = 1; playing = false; document.getElementById('playBtn').textContent = '▶'; }
+    render();
+    if (playing) requestAnimationFrame(tick);
+  }
+
+  document.getElementById('playBtn').onclick = ()=>{
+    if (t >= 1) t = 0;
+    playing = !playing;
+    document.getElementById('playBtn').textContent = playing ? '❚❚' : '▶';
+    if (playing){ lastTs = null; requestAnimationFrame(tick); }
+  };
+  document.getElementById('resetBtn').onclick = ()=>{
+    t = 0; playing = false; document.getElementById('playBtn').textContent = '▶'; render();
+  };
+  document.getElementById('stepFwdBtn').onclick = ()=>{
+    playing = false; document.getElementById('playBtn').textContent = '▶';
+    t = Math.min(1, t + 0.08); render();
+  };
+  document.getElementById('stepBackBtn').onclick = ()=>{
+    playing = false; document.getElementById('playBtn').textContent = '▶';
+    t = Math.max(0, t - 0.08); render();
+  };
+  document.getElementById('scrub').oninput = (e)=>{
+    playing = false; document.getElementById('playBtn').textContent = '▶';
+    t = Number(e.target.value) / 1000; render();
+  };
+  document.getElementById('speedSelect').onchange = (e)=>{
+    speed = Number(e.target.value);
+  };
+
+  // ---------- init ----------
+  drawField();
+  buildLayers();
+  buildTabs();
+  setPlay('slantFlat');
+  setDefense('cover2');
+})();
+</script>
+</body>
+</html>
