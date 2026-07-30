@@ -306,6 +306,24 @@
         {t:0.62, label:'Lead block clears', target:'RB_R'}
       ],
       throw:{ t0:0.18, t1:0.28, from:'QB', to:'RB_L', type:'handoff' }
+    },
+    draw: {
+      name:'Draw',
+      desc:'<b>Draw.</b> Both WRs and the center sell streak routes to hold the defense back in coverage. The QB drops like a pass but the RB — set 10 yards deep, right behind the QB — stays put. After a long hold to sell the fake, the QB hands off and the back hits it straight up the middle.',
+      routes:{
+        QB:  [{t:0,x:220,y:250},{t:0.35,x:165,y:250},{t:0.65,x:165,y:250},{t:0.7,x:160,y:253},{t:1,x:158,y:255}],
+        C:   [{t:0,x:250,y:250},{t:1,x:700,y:270}],
+        WR_L:[{t:0,x:250,y:110},{t:1,x:700,y:90}],
+        WR_R:[{t:0,x:250,y:400},{t:1,x:700,y:380}],
+        RB:  [{t:0,x:150,y:250},{t:0.65,x:150,y:250},{t:0.7,x:158,y:250},{t:0.85,x:330,y:250},{t:1,x:570,y:250}]
+      },
+      reads:[
+        {t:0.05, label:'Sell the drop', target:'QB'},
+        {t:0.35, label:'Holding the fake', target:'QB'},
+        {t:0.65, label:'Handoff — Draw!', target:'RB'},
+        {t:0.82, label:'Hits it up the gut', target:'RB'}
+      ],
+      throw:{ t0:0.65, t1:0.72, from:'QB', to:'RB', type:'handoff' }
     }
   };
 
@@ -424,7 +442,7 @@
     });
   }
 
-  const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y', WR:'X', RB_L:'RB', RB_R:'RB'};
+  const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y', WR:'X', RB_L:'RB', RB_R:'RB', RB:'RB'};
   const DEF_LABELS = {CB_L:'C', CB_R:'C', NB:'N', S1:'S', S2:'S', RUSH:'R', FS:'F'};
 
   function drawPlayers(){
