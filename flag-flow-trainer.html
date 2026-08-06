@@ -195,6 +195,28 @@
   }
   .lineup-chip select:focus{ outline:1px solid var(--flag-gold); }
   .lineup-chip select option{ background:var(--panel); color:var(--chalk); }
+  .lineup-chip select optgroup{ font-weight:700; color:#000; font-style:normal; }
+
+  .builder-panel{
+    display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    margin-bottom:10px;
+    padding:10px 12px;
+    background:rgba(227,178,60,0.06);
+    border:1px solid rgba(227,178,60,0.35);
+    border-radius:10px;
+  }
+  .builder-flip{
+    background:var(--flag-gold);
+    color:#2a1d05;
+    border:none;
+    border-radius:20px;
+    padding:6px 14px;
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:700;
+    font-size:0.8rem;
+    cursor:pointer;
+  }
+  .builder-flip:hover{ opacity:0.9; }
 
   footer{
     text-align:center;
@@ -224,6 +246,8 @@
   </div>
 
   <div class="lineup-panel" id="lineupPanel"></div>
+  <div class="builder-panel" id="builderPanel" style="display:none;"></div>
+  <div class="builder-panel" id="runBuilderPanel" style="display:none;"></div>
 
   <div class="board-shell">
     <svg id="field" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -277,6 +301,204 @@
   function pathFromWaypoints(waypoints){
     return waypoints.map((w,i)=> i===0 ? `M ${w.x} ${w.y}` : `L ${w.x} ${w.y}`).join(' ');
   }
+
+  // ---------- yard scale ----------
+  // LOS_X is the pixel x-position of the line of scrimmage; YARD_PX is
+  // pixels per yard (used for both depth and width). Field runs 0–50
+  // yards, LOS fixed at the 20. CENTER_Y is the field's midline.
+  const LOS_X = 330;
+  const YARD_PX = 14;
+  const FIELD_LEFT = 50;
+  const FIELD_TOP = 50, FIELD_BOTTOM = 450;
+  const CENTER_Y = 250;
+  const HALF_WIDTH = (FIELD_BOTTOM - FIELD_TOP) / 2; // px from center to sideline
+
+  // Keeps generated route points a safe margin inside the sidelines
+  // (accounts for player bubble radius) rather than drawing off the field.
+  function clampY(y){ return Math.max(72, Math.min(428, y)); }
+
+  // Left-side receivers move toward center by increasing y; right-side
+  // receivers move toward center by decreasing y. Route generators use
+  // this so the same route definition works mirrored on either side.
+  function dirFor(side){ return side === 'L' ? {toCenter:1, toSideline:-1} : {toCenter:-1, toSideline:1}; }
+
+  // Traces a quarter-circle drift — the receiver curls out and upfield
+  // along a rounded arc (like a slice of an "O") instead of a hard elbow,
+  // then holds that lane the rest of the way upfield. Right = bottom-left
+  // quadrant, Left = top-left quadrant (both relative to a circle centered
+  // downfield of the start point) — this puts the lateral drift early in
+  // the route and the upfield turn late, matching a real bubble screen.
+  // dirSign: +1 = Right (drifts toward larger y), -1 = Left (toward smaller y).
+  function bubbleArc(sx, sy, dirSign){
+    const R = 7*YARD_PX;
+    const cx = sx + R, cy = sy; // circle center is R downfield of the start point
+    const arcT = [0, 0.09, 0.18, 0.28, 0.4];
+    const wps = arcT.map((tt,i)=>{
+      const angle = Math.PI - dirSign*(Math.PI/2)*(i/(arcT.length-1));
+      return {t:tt, x: cx + R*Math.cos(angle), y: clampY(cy + R*Math.sin(angle))};
+    });
+    wps.push({t:1, x: sx+27*YARD_PX, y: clampY(sy + dirSign*R)});
+    return wps;
+  }
+
+  // ---------- route library (for building custom pass plays) ----------
+  // Each route is a function(startX, startY, side) -> waypoint array,
+  // in the same {t,x,y} shape the animation engine already expects.
+  const ROUTES = {
+    streak: { label:'Streak', throwT:0.55, generate(sx,sy){
+      return [{t:0,x:sx,y:sy},{t:1,x:sx+27*YARD_PX,y:sy}];
+    }},
+    slant: { label:'Slant', throwT:0.30, generate(sx,sy,side){
+      const d = dirFor(side);
+      return [{t:0,x:sx,y:sy},
+              {t:0.45,x:sx+7*YARD_PX,  y:clampY(sy+d.toCenter*7*YARD_PX)},
+              {t:1,   x:sx+14*YARD_PX, y:clampY(sy+d.toCenter*14*YARD_PX)}];
+    }},
+    bubbleL: { label:'Bubble (Left)', throwT:0.28, generate(sx,sy){
+      return bubbleArc(sx, sy, -1);
+    }},
+    bubbleR: { label:'Bubble (Right)', throwT:0.28, generate(sx,sy){
+      return bubbleArc(sx, sy, 1);
+    }},
+    flatRight: { label:'Flat (Right)', throwT:0.32, generate(sx,sy){
+      return [{t:0,x:sx,y:sy},
+              {t:0.45,x:sx+6*YARD_PX,  y:clampY(sy+6*YARD_PX)},
+              {t:1,   x:sx+10*YARD_PX, y:clampY(sy+10*YARD_PX)}];
+    }},
+    flatLeft: { label:'Flat (Left)', throwT:0.32, generate(sx,sy){
+      return [{t:0,x:sx,y:sy},
+              {t:0.45,x:sx+6*YARD_PX,  y:clampY(sy-6*YARD_PX)},
+              {t:1,   x:sx+10*YARD_PX, y:clampY(sy-10*YARD_PX)}];
+    }},
+    screenR: { label:'Screen (Right)', throwT:0.35, generate(sx,sy){
+      const targetY = clampY(FIELD_BOTTOM - 5*YARD_PX);
+      return [{t:0,x:sx,y:sy},
+              {t:0.25,x:sx+1*YARD_PX,y:targetY},
+              {t:0.45,x:sx+1*YARD_PX,y:targetY},
+              {t:1,   x:sx+22*YARD_PX,y:targetY}];
+    }},
+    screenL: { label:'Screen (Left)', throwT:0.35, generate(sx,sy){
+      const targetY = clampY(FIELD_TOP + 5*YARD_PX);
+      return [{t:0,x:sx,y:sy},
+              {t:0.25,x:sx+1*YARD_PX,y:targetY},
+              {t:0.45,x:sx+1*YARD_PX,y:targetY},
+              {t:1,   x:sx+22*YARD_PX,y:targetY}];
+    }},
+    out: { label:'Out', throwT:0.58, generate(sx,sy,side){
+      const d = dirFor(side);
+      return [{t:0,x:sx,y:sy},
+              {t:0.55,x:sx+10*YARD_PX,y:sy},
+              {t:1,   x:sx+10*YARD_PX,y:clampY(sy+d.toSideline*8*YARD_PX)}]; // x held constant — true 90° cut
+    }},
+    in: { label:'In', throwT:0.58, generate(sx,sy,side){
+      const d = dirFor(side);
+      return [{t:0,x:sx,y:sy},
+              {t:0.55,x:sx+10*YARD_PX,y:sy},
+              {t:1,   x:sx+10*YARD_PX,y:clampY(sy+d.toCenter*8*YARD_PX)}]; // x held constant — true 90° cut
+    }},
+    post: { label:'Post', throwT:0.62, generate(sx,sy,side){
+      const d = dirFor(side);
+      return [{t:0,x:sx,y:sy},
+              {t:0.5,x:sx+10*YARD_PX,y:sy},
+              {t:1,  x:sx+17*YARD_PX,y:clampY(sy+d.toCenter*7*YARD_PX)}];
+    }},
+    postCorner: { label:'Post Corner', throwT:0.72, generate(sx,sy,side){
+      const d = dirFor(side);
+      const y1 = sy;
+      const y2 = clampY(sy + d.toCenter*7*YARD_PX);
+      const y3 = clampY(y2 + d.toSideline*7*YARD_PX);
+      return [{t:0,x:sx,y:sy},
+              {t:0.3,x:sx+5*YARD_PX, y:y1},
+              {t:0.6,x:sx+12*YARD_PX,y:y2},
+              {t:1,  x:sx+13*YARD_PX,y:y3}];
+    }},
+    stay: { label:'Stay / Block', throwT:0.75, generate(sx,sy){
+      return [{t:0,x:sx,y:sy},{t:1,x:sx,y:sy}];
+    }}
+  };
+  const ROUTE_ORDER = ['stay','streak','slant','bubbleL','bubbleR','flatRight','flatLeft','screenL','screenR','out','in','post','postCorner'];
+
+  // ---------- run path library (for the ball carrier on run plays) ----------
+  // Each is function(startX,startY) -> LOCAL waypoints, t:0..1 representing
+  // just the run itself. The run builder time-shifts these to start
+  // wherever the exchange (handoff/toss) actually happens in the play.
+  function offTackleArc(sx,sy,dirSign){
+    return [{t:0,x:sx,y:sy},
+            {t:0.35,x:sx+2*YARD_PX,y:clampY(sy+dirSign*5*YARD_PX)},
+            {t:0.6, x:sx+9*YARD_PX,y:clampY(sy+dirSign*6*YARD_PX)},
+            {t:1,   x:sx+20*YARD_PX,y:clampY(sy+dirSign*6.5*YARD_PX)}];
+  }
+  function sweepArc(sx,sy,dirSign){
+    return [{t:0,x:sx,y:sy},
+            {t:0.25,x:sx+1*YARD_PX,y:clampY(sy+dirSign*8*YARD_PX)},
+            {t:1,   x:sx+20*YARD_PX,y:clampY(sy+dirSign*9*YARD_PX)}];
+  }
+  const RUN_PATHS = {
+    dive: { label:'Dive', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx+20*YARD_PX,y:sy}]; }},
+    offTackleLeft: { label:'Off-Tackle (Left)', generate(sx,sy){ return offTackleArc(sx,sy,-1); }},
+    offTackleRight: { label:'Off-Tackle (Right)', generate(sx,sy){ return offTackleArc(sx,sy,1); }},
+    sweepLeft: { label:'Sweep (Left)', generate(sx,sy){ return sweepArc(sx,sy,-1); }},
+    sweepRight: { label:'Sweep (Right)', generate(sx,sy){ return sweepArc(sx,sy,1); }}
+  };
+  const RUN_PATH_ORDER = ['dive','offTackleLeft','offTackleRight','sweepLeft','sweepRight'];
+  const RUN_PATH_KEYS = Object.keys(RUN_PATHS);
+  const PATH_ORDER = RUN_PATH_ORDER.concat(ROUTE_ORDER); // combined dropdown: run paths first, then routes
+  const QB_ACTION_LABELS = { handoff:'Handoff', delayedHandoff:'Delayed Handoff (Draw)', toss:'Toss' };
+
+  // ---------- formation library ----------
+  // positions() returns each slot's pre-snap {x,y[,side]}. wrSlots lists
+  // every position OTHER than QB that can be assigned a route — QB
+  // always drops back into the pocket, everyone else picks from ROUTES
+  // (including 'stay' for pass protection).
+  const FORMATIONS = {
+    proSet: {
+      name:'Pro Set',
+      wrSlots:['WR','RB_L','RB_R','C'],
+      positions(flexSide){
+        return {
+          QB:  {x:LOS_X-3*YARD_PX, y:CENTER_Y},
+          C:   {x:LOS_X, y:CENTER_Y},
+          WR:  {x:LOS_X, y: flexSide==='L' ? clampY(CENTER_Y-(2/3)*HALF_WIDTH) : clampY(CENTER_Y+(2/3)*HALF_WIDTH), side:flexSide},
+          RB_L:{x:LOS_X-7.5*YARD_PX, y:CENTER_Y-4.5*YARD_PX},
+          RB_R:{x:LOS_X-7.5*YARD_PX, y:CENTER_Y+4.5*YARD_PX}
+        };
+      }
+    },
+    singleBack: {
+      name:'Single Back',
+      wrSlots:['WR_L','WR_R','RB','C'],
+      positions(){
+        return {
+          QB:  {x:LOS_X-3*YARD_PX, y:CENTER_Y},
+          C:   {x:LOS_X, y:CENTER_Y},
+          WR_L:{x:LOS_X, y:clampY(CENTER_Y-(2/3)*HALF_WIDTH), side:'L'},
+          WR_R:{x:LOS_X, y:clampY(CENTER_Y+(2/3)*HALF_WIDTH), side:'R'},
+          RB:  {x:LOS_X-7.5*YARD_PX, y:CENTER_Y}
+        };
+      }
+    },
+    trips: {
+      name:'Trips',
+      wrSlots:['WR1','WR2','WR3','C'],
+      positions(flexSide){
+        // WR1 is the outermost receiver, on the LOS, 3 yards wider than
+        // the standard single-WR split. WR2/WR3 bunch in tight — 3 yards
+        // inside each other laterally, staggered a yard deeper each, so
+        // it reads as a stack rather than a spread-out trips look.
+        const wr1Off = (2/3)*HALF_WIDTH + 3*YARD_PX;
+        const wr2Off = wr1Off - 3*YARD_PX;
+        const wr3Off = wr1Off - 6*YARD_PX;
+        const sign = flexSide==='L' ? -1 : 1;
+        return {
+          QB: {x:LOS_X-3*YARD_PX, y:CENTER_Y},
+          C:  {x:LOS_X, y:CENTER_Y},
+          WR1:{x:LOS_X,          y:clampY(CENTER_Y+sign*wr1Off), side:flexSide},
+          WR2:{x:LOS_X-1*YARD_PX,y:clampY(CENTER_Y+sign*wr2Off), side:flexSide},
+          WR3:{x:LOS_X-2*YARD_PX,y:clampY(CENTER_Y+sign*wr3Off), side:flexSide}
+        };
+      }
+    }
+  };
 
   // ---------- data: offensive alignment & plays ----------
   const offenseStart = {
@@ -760,6 +982,20 @@
       "to": "RB",
       "type": "handoff"
     }
+  },
+  "customPass": {
+    "name": "Custom Pass",
+    "desc": "<b>Custom Pass.</b> Build your own pass concept — pick a formation, assign a route to each receiver, and choose who the QB throws to.",
+    "routes": {},
+    "reads": [],
+    "throw": null
+  },
+  "customRun": {
+    "name": "Custom Run",
+    "desc": "<b>Custom Run.</b> Build your own run concept — pick a formation, a QB action, a path for each of the other four, and who the ball goes to.",
+    "routes": {},
+    "reads": [],
+    "throw": null
   }
 };
 
@@ -925,13 +1161,6 @@
     return e;
   }
 
-  // ---------- yard scale ----------
-  // LOS_X is the pixel x-position of the line of scrimmage; YARD_PX is
-  // pixels per yard. Field runs 0–50 yards, LOS fixed at the 20.
-  const LOS_X = 330;
-  const YARD_PX = 14;
-  const FIELD_LEFT = 50; // pixel x of the 0-yard line
-
   // ---------- static field ----------
   function drawField(){
     svg.innerHTML = '';
@@ -997,18 +1226,18 @@
     });
   }
 
-  const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y', WR:'X', RB_L:'RB', RB_R:'RB', RB:'RB'};
+  const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y', WR:'X', RB_L:'RB', RB_R:'RB', RB:'RB', WR1:'1', WR2:'2', WR3:'3'};
   const DEF_LABELS = {CB_L:'C', CB_R:'C', NB:'N', S1:'S', S2:'S', RUSH:'R', FS:'F'};
 
   // ---------- roster & lineup assignment ----------
   // Static roster — edit this list directly to match your team.
-  const ROSTER = ['Jake','Mia','Sam','Ava','Leo','Zoe','Owen','Ruby'];
+  const ROSTER = ['Conrad','Isaiah','Jett','Levi','Mason','Olin','Owen','Pratt','Zoe'];
 
   // Friendly role names shown next to each dropdown. Falls back to the
   // raw key (e.g. "WR_L") for anything not listed here.
   const ROLE_NAMES = {
     QB:'QB', C:'Center', WR:'WR', WR_L:'WR (L)', WR_R:'WR (R)', WR_S:'Slot',
-    RB:'RB', RB_L:'RB (L)', RB_R:'RB (R)'
+    RB:'RB', RB_L:'RB (L)', RB_R:'RB (R)', WR1:'WR1 (outside)', WR2:'WR2', WR3:'WR3 (inside)'
   };
 
   // Shared across plays so a player assigned to QB stays the QB no matter
@@ -1044,6 +1273,347 @@
       chip.appendChild(select);
       panel.appendChild(chip);
     });
+  }
+
+  // ---------- custom pass builder ----------
+  const customPass = {
+    formation: 'singleBack',   // 'proSet' | 'singleBack' | 'trips'
+    flexSide: 'L',              // which side the flexible WR(s) line up — Pro Set / Trips only
+    routes: {},                // slot key -> route name, e.g. { WR_L:'slant', WR_R:'flatRight' }
+    target: null                // slot key the QB throws to
+  };
+
+  function regenerateCustomPass(){
+    const formation = FORMATIONS[customPass.formation];
+    const positions = formation.positions(customPass.flexSide);
+    const routes = {};
+
+    Object.keys(positions).forEach(slot=>{
+      const pos = positions[slot];
+      if (slot === 'QB'){
+        routes.QB = [{t:0,x:pos.x,y:pos.y},{t:0.25,x:pos.x-4*YARD_PX,y:pos.y},{t:1,x:pos.x-4.3*YARD_PX,y:pos.y+3}];
+      } else if (formation.wrSlots.includes(slot)){
+        if (!customPass.routes[slot]) customPass.routes[slot] = slot.startsWith('WR') ? 'streak' : 'stay';
+        const routeDef = ROUTES[customPass.routes[slot]];
+        const side = pos.side || (pos.y < CENTER_Y ? 'L' : 'R'); // non-WR slots (C, RB) infer break direction from their side of the field
+        routes[slot] = routeDef.generate(pos.x, pos.y, side);
+      } else {
+        routes[slot] = [{t:0,x:pos.x,y:pos.y},{t:1,x:pos.x,y:pos.y}]; // fallback: holds position
+      }
+    });
+
+    if (!formation.wrSlots.includes(customPass.target)) customPass.target = formation.wrSlots[0];
+    const targetRouteDef = ROUTES[customPass.routes[customPass.target]];
+
+    PLAYS.customPass.routes = routes;
+    PLAYS.customPass.reads = [
+      {t: Math.max(0.05, targetRouteDef.throwT - 0.12), label: 'Read: ' + targetRouteDef.label, target: customPass.target}
+    ];
+    PLAYS.customPass.throw = {t0: targetRouteDef.throwT, t1: targetRouteDef.throwT + 0.08, from:'QB', to: customPass.target, type:'pass'};
+
+    const routeSummary = formation.wrSlots.map(s => (ROLE_NAMES[s]||s) + ': ' + ROUTES[customPass.routes[s]].label).join(', ');
+    PLAYS.customPass.desc = `<b>Custom Pass — ${formation.name}.</b> ${routeSummary}. Throwing to ${ROLE_NAMES[customPass.target]||customPass.target}.`;
+  }
+
+  function buildBuilderPanel(){
+    const panel = document.getElementById('builderPanel');
+    panel.innerHTML = '';
+    const formation = FORMATIONS[customPass.formation];
+
+    // formation selector
+    const fChip = document.createElement('div');
+    fChip.className = 'lineup-chip';
+    const fRole = document.createElement('span'); fRole.className='role'; fRole.textContent='Formation';
+    const fSelect = document.createElement('select');
+    Object.keys(FORMATIONS).forEach(key=>{
+      const opt = document.createElement('option');
+      opt.value = key; opt.textContent = FORMATIONS[key].name;
+      if (key === customPass.formation) opt.selected = true;
+      fSelect.appendChild(opt);
+    });
+    fSelect.onchange = ()=>{
+      customPass.formation = fSelect.value;
+      customPass.routes = {};
+      customPass.target = null;
+      regenerateCustomPass();
+      drawRoutePreviews();
+      buildBuilderPanel();
+      buildLineupPanel();
+      render();
+    };
+    fChip.appendChild(fRole); fChip.appendChild(fSelect);
+    panel.appendChild(fChip);
+
+    // route selector per WR slot
+    formation.wrSlots.forEach(slot=>{
+      const chip = document.createElement('div');
+      chip.className = 'lineup-chip';
+      const role = document.createElement('span'); role.className='role'; role.textContent = ROLE_NAMES[slot]||slot;
+      const select = document.createElement('select');
+      ROUTE_ORDER.forEach(rKey=>{
+        const opt = document.createElement('option');
+        opt.value = rKey; opt.textContent = ROUTES[rKey].label;
+        if ((customPass.routes[slot] || (slot.startsWith('WR') ? 'streak' : 'stay')) === rKey) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.onchange = ()=>{
+        customPass.routes[slot] = select.value;
+        regenerateCustomPass();
+        drawRoutePreviews();
+        buildBuilderPanel();
+        render();
+      };
+      chip.appendChild(role); chip.appendChild(select);
+      panel.appendChild(chip);
+    });
+
+    // target (who gets the ball) selector
+    const tChip = document.createElement('div');
+    tChip.className = 'lineup-chip';
+    const tRole = document.createElement('span'); tRole.className='role'; tRole.textContent='Throw to';
+    const tSelect = document.createElement('select');
+    formation.wrSlots.forEach(slot=>{
+      const opt = document.createElement('option');
+      opt.value = slot; opt.textContent = ROLE_NAMES[slot]||slot;
+      if (customPass.target === slot) opt.selected = true;
+      tSelect.appendChild(opt);
+    });
+    tSelect.onchange = ()=>{
+      customPass.target = tSelect.value;
+      regenerateCustomPass();
+      render();
+    };
+    tChip.appendChild(tRole); tChip.appendChild(tSelect);
+    panel.appendChild(tChip);
+
+    // flip button
+    const flipBtn = document.createElement('button');
+    flipBtn.className = 'builder-flip';
+    flipBtn.textContent = '⇋ Flip formation';
+    flipBtn.onclick = ()=>{
+      if (customPass.formation === 'proSet' || customPass.formation === 'trips'){
+        customPass.flexSide = customPass.flexSide === 'L' ? 'R' : 'L';
+      } else {
+        const tmp = customPass.routes.WR_L;
+        customPass.routes.WR_L = customPass.routes.WR_R;
+        customPass.routes.WR_R = tmp;
+      }
+      regenerateCustomPass();
+      drawRoutePreviews();
+      buildBuilderPanel();
+      render();
+    };
+    panel.appendChild(flipBtn);
+  }
+
+  // ---------- custom run builder ----------
+  const customRun = {
+    formation: 'proSet',       // 'proSet' | 'singleBack' | 'trips'
+    flexSide: 'L',
+    qbAction: 'handoff',       // 'handoff' | 'delayedHandoff' | 'toss'
+    paths: {},                 // slot key -> path key (from PATH_ORDER)
+    goesTo: null                // slot key that actually carries the ball
+  };
+
+  function pathDefFor(key){ return RUN_PATH_KEYS.includes(key) ? RUN_PATHS[key] : ROUTES[key]; }
+
+  function regenerateCustomRun(){
+    const formation = FORMATIONS[customRun.formation];
+    const positions = formation.positions(customRun.flexSide);
+    const slots = formation.wrSlots; // all non-QB assignable slots
+    const routes = {};
+
+    slots.forEach(slot=>{ if (!customRun.paths[slot]) customRun.paths[slot] = 'stay'; });
+    if (!slots.includes(customRun.goesTo)){
+      customRun.goesTo = slots.find(s=>s.startsWith('RB')) || slots.find(s=>s.startsWith('WR')) || slots[0];
+      if (customRun.paths[customRun.goesTo] === 'stay') customRun.paths[customRun.goesTo] = 'dive';
+    }
+
+    const carrierSlot = customRun.goesTo;
+    const carrierPos = positions[carrierSlot];
+    const carrierIsWR = carrierSlot.startsWith('WR');
+    const carrierPathKey = customRun.paths[carrierSlot];
+    const carrierSide = carrierPos.side || (carrierPos.y < CENTER_Y ? 'L' : 'R');
+    const qbPos = positions.QB;
+
+    let carrierWaypoints, qbWaypoints, throwT0, throwT1;
+
+    if (customRun.qbAction === 'toss'){
+      // No mesh point — the carrier's path runs from the snap; QB pitches mid-stride.
+      carrierWaypoints = pathDefFor(carrierPathKey).generate(carrierPos.x, carrierPos.y, carrierSide);
+      qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:0.15,x:qbPos.x-2*YARD_PX,y:qbPos.y},{t:1,x:qbPos.x-2*YARD_PX,y:qbPos.y+3}];
+      throwT0 = 0.12; throwT1 = 0.2;
+    } else {
+      // Handoff / Delayed Handoff share the same mechanic: exchange fires
+      // once the carrier is available — instantly for a nearby RB (who
+      // just stays put), or after real travel time for a WR crossing in
+      // from a wide alignment. Delayed Handoff forces a long hold regardless.
+      const HOLD = {handoff:0.2, delayedHandoff:0.68};
+      const travelT = carrierIsWR ? 0.35 : 0.05;
+      const exchangeT = Math.max(HOLD[customRun.qbAction], travelT);
+
+      const originX = carrierIsWR ? (qbPos.x - 1*YARD_PX) : carrierPos.x;
+      const originY = carrierIsWR ? qbPos.y : carrierPos.y;
+
+      const preWaypoints = carrierIsWR
+        ? [{t:0,x:carrierPos.x,y:carrierPos.y},{t:exchangeT,x:originX,y:originY}]   // WR travels to QB
+        : [{t:0,x:carrierPos.x,y:carrierPos.y},{t:exchangeT,x:carrierPos.x,y:carrierPos.y}]; // RB stays put
+
+      const localWps = pathDefFor(carrierPathKey).generate(originX, originY, carrierSide);
+      const postWaypoints = localWps.slice(1).map(wp => ({ t: exchangeT + wp.t*(1-exchangeT), x: wp.x, y: wp.y }));
+      carrierWaypoints = preWaypoints.concat(postWaypoints);
+
+      if (carrierIsWR){
+        // QB stays near his own drop, waiting for the WR to arrive.
+        qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:0.2,x:qbPos.x-2*YARD_PX,y:qbPos.y},{t:1,x:qbPos.x-2*YARD_PX,y:qbPos.y+3}];
+      } else {
+        // QB travels to the RB at a fixed, quick pace — identical speed
+        // whether it's a Handoff or Delayed Handoff. Any extra delay is a
+        // hold AT the RB (the exchange still fires at exchangeT), not a
+        // slower approach — this is what makes Delayed Handoff read as a
+        // play-action pass fake that resolves into a draw, not just a
+        // generically slow handoff.
+        const approachT = 0.18;
+        qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},
+                        {t:approachT,x:carrierPos.x+2*YARD_PX,y:carrierPos.y},
+                        {t:exchangeT,x:carrierPos.x+1*YARD_PX,y:carrierPos.y},
+                        {t:1,x:carrierPos.x+1*YARD_PX,y:carrierPos.y+3}];
+      }
+      throwT0 = Math.max(0, exchangeT-0.02); throwT1 = exchangeT+0.03;
+    }
+
+    routes[carrierSlot] = carrierWaypoints;
+    routes.QB = qbWaypoints;
+
+    // Everyone else runs their assigned path independently (decoy/fake motion, no ball).
+    slots.forEach(slot=>{
+      if (slot === carrierSlot) return;
+      const pos = positions[slot];
+      const side = pos.side || (pos.y < CENTER_Y ? 'L' : 'R');
+      routes[slot] = pathDefFor(customRun.paths[slot]).generate(pos.x, pos.y, side);
+    });
+
+    PLAYS.customRun.routes = routes;
+    const carrierPathLabel = pathDefFor(carrierPathKey).label;
+    PLAYS.customRun.reads = [
+      {t: Math.max(0.05, throwT0-0.08), label: QB_ACTION_LABELS[customRun.qbAction]+' → '+(ROLE_NAMES[carrierSlot]||carrierSlot), target: carrierSlot}
+    ];
+    PLAYS.customRun.throw = {t0:throwT0, t1:throwT1, from:'QB', to:carrierSlot, type:'handoff'};
+    PLAYS.customRun.desc = `<b>Custom Run — ${formation.name}.</b> ${QB_ACTION_LABELS[customRun.qbAction]} to ${ROLE_NAMES[carrierSlot]||carrierSlot} (${carrierPathLabel}).`;
+  }
+
+  function buildRunBuilderPanel(){
+    const panel = document.getElementById('runBuilderPanel');
+    panel.innerHTML = '';
+    const formation = FORMATIONS[customRun.formation];
+
+    function makeSelect(labelText, options, currentValue, onChange){
+      const chip = document.createElement('div');
+      chip.className = 'lineup-chip';
+      const role = document.createElement('span'); role.className='role'; role.textContent = labelText;
+      const select = document.createElement('select');
+      options.forEach(([val,text])=>{
+        const opt = document.createElement('option');
+        opt.value = val; opt.textContent = text;
+        if (val === currentValue) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.onchange = ()=> onChange(select.value);
+      chip.appendChild(role); chip.appendChild(select);
+      panel.appendChild(chip);
+    }
+
+    // Same as makeSelect, but splits options into "Run:" and "Pass:" optgroups.
+    function makePathSelect(labelText, currentValue, onChange){
+      const chip = document.createElement('div');
+      chip.className = 'lineup-chip';
+      const role = document.createElement('span'); role.className='role'; role.textContent = labelText;
+      const select = document.createElement('select');
+
+      const runGroup = document.createElement('optgroup'); runGroup.label = 'Run:';
+      RUN_PATH_ORDER.forEach(k=>{
+        const opt = document.createElement('option');
+        opt.value = k; opt.textContent = RUN_PATHS[k].label;
+        if (k === currentValue) opt.selected = true;
+        runGroup.appendChild(opt);
+      });
+      const passGroup = document.createElement('optgroup'); passGroup.label = 'Pass:';
+      ROUTE_ORDER.forEach(k=>{
+        const opt = document.createElement('option');
+        opt.value = k; opt.textContent = ROUTES[k].label;
+        if (k === currentValue) opt.selected = true;
+        passGroup.appendChild(opt);
+      });
+      select.appendChild(runGroup);
+      select.appendChild(passGroup);
+      select.onchange = ()=> onChange(select.value);
+      chip.appendChild(role); chip.appendChild(select);
+      panel.appendChild(chip);
+    }
+
+    // formation
+    makeSelect('Formation', Object.keys(FORMATIONS).map(k=>[k,FORMATIONS[k].name]), customRun.formation, (val)=>{
+      customRun.formation = val;
+      customRun.paths = {};
+      customRun.goesTo = null;
+      regenerateCustomRun();
+      drawRoutePreviews();
+      buildRunBuilderPanel();
+      buildLineupPanel();
+      render();
+    });
+
+    // QB action
+    makeSelect('QB Action', Object.keys(QB_ACTION_LABELS).map(k=>[k,QB_ACTION_LABELS[k]]), customRun.qbAction, (val)=>{
+      customRun.qbAction = val;
+      regenerateCustomRun();
+      drawRoutePreviews();
+      render();
+    });
+
+    // path per non-QB slot
+    formation.wrSlots.forEach(slot=>{
+      makePathSelect(ROLE_NAMES[slot]||slot, customRun.paths[slot]||'stay', (val)=>{
+        customRun.paths[slot] = val;
+        regenerateCustomRun();
+        drawRoutePreviews();
+        buildRunBuilderPanel();
+        render();
+      });
+    });
+
+
+    // goes to
+    makeSelect('Goes to', formation.wrSlots.map(s=>[s,ROLE_NAMES[s]||s]), customRun.goesTo, (val)=>{
+      customRun.goesTo = val;
+      regenerateCustomRun();
+      drawRoutePreviews();
+      render();
+    });
+
+    // flip
+    const flipBtn = document.createElement('button');
+    flipBtn.className = 'builder-flip';
+    flipBtn.textContent = '⇋ Flip formation';
+    flipBtn.onclick = ()=>{
+      if (customRun.formation === 'proSet'){
+        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
+        const tmp = customRun.paths.RB_L; customRun.paths.RB_L = customRun.paths.RB_R; customRun.paths.RB_R = tmp;
+        if (customRun.goesTo === 'RB_L') customRun.goesTo = 'RB_R';
+        else if (customRun.goesTo === 'RB_R') customRun.goesTo = 'RB_L';
+      } else if (customRun.formation === 'trips'){
+        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
+      } else {
+        const tmp = customRun.paths.WR_L; customRun.paths.WR_L = customRun.paths.WR_R; customRun.paths.WR_R = tmp;
+        if (customRun.goesTo === 'WR_L') customRun.goesTo = 'WR_R';
+        else if (customRun.goesTo === 'WR_R') customRun.goesTo = 'WR_L';
+      }
+      regenerateCustomRun();
+      drawRoutePreviews();
+      buildRunBuilderPanel();
+      render();
+    };
+    panel.appendChild(flipBtn);
   }
 
   function drawPlayers(){
@@ -1146,6 +1716,22 @@
     currentPlay = key;
     t = 0; playing = false;
     document.getElementById('playBtn').textContent = '▶';
+    const builderPanel = document.getElementById('builderPanel');
+    const runBuilderPanel = document.getElementById('runBuilderPanel');
+    if (key === 'customPass'){
+      builderPanel.style.display = 'flex';
+      regenerateCustomPass();
+      buildBuilderPanel();
+    } else {
+      builderPanel.style.display = 'none';
+    }
+    if (key === 'customRun'){
+      runBuilderPanel.style.display = 'flex';
+      regenerateCustomRun();
+      buildRunBuilderPanel();
+    } else {
+      runBuilderPanel.style.display = 'none';
+    }
     document.getElementById('playDesc').innerHTML = PLAYS[key].desc;
     document.querySelectorAll('#playTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
     drawRoutePreviews();
