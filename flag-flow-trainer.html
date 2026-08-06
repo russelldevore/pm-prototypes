@@ -218,6 +218,68 @@
   }
   .builder-flip:hover{ opacity:0.9; }
 
+  .mode-toggle{
+    display:inline-flex;
+    gap:4px;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:22px;
+    padding:4px;
+    margin-bottom:14px;
+  }
+  .mode-btn{
+    background:transparent;
+    border:none;
+    color:var(--chalk-dim);
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:700;
+    font-size:0.82rem;
+    padding:7px 18px;
+    border-radius:18px;
+    cursor:pointer;
+    transition:all .15s ease;
+  }
+  .mode-btn:hover{ color:var(--chalk); }
+  .mode-btn.active{ background:var(--flag-gold); color:#2a1d05; }
+
+  details.collapsible{
+    margin-bottom:10px;
+    border:1px solid var(--panel-line);
+    border-radius:10px;
+    background:var(--panel);
+    overflow:hidden;
+  }
+  details.collapsible > summary{
+    list-style:none;
+    cursor:pointer;
+    padding:10px 14px;
+    font-family:'Bradley Hand','Segoe Print','Chalkboard SE','Comic Sans MS',cursive;
+    font-size:0.95rem;
+    color:var(--flag-gold);
+    display:flex;
+    align-items:center;
+    gap:8px;
+    user-select:none;
+  }
+  details.collapsible > summary::-webkit-details-marker{ display:none; }
+  details.collapsible > summary::before{
+    content:'▸';
+    display:inline-block;
+    transition:transform .15s ease;
+    font-size:0.75rem;
+  }
+  details.collapsible[open] > summary::before{ transform:rotate(90deg); }
+  details.collapsible > summary:hover{ background:rgba(227,178,60,0.08); }
+  details.collapsible .lineup-panel,
+  details.collapsible .builder-panel{
+    margin:0;
+    border:none;
+    border-top:1px solid var(--panel-line);
+    border-radius:0;
+    background:transparent;
+    padding:10px 14px;
+  }
+
   footer{
     text-align:center;
     color:var(--chalk-dim);
@@ -234,20 +296,53 @@
     <p class="subtitle">5-on-5 playbook trainer — watch the play unfold, snap to whistle.</p>
   </header>
 
-  <div class="tabs-row">
-    <div class="tab-group">
-      <span class="tab-label">OFFENSE</span>
-      <div id="playTabs"></div>
-    </div>
-    <div class="tab-group">
-      <span class="tab-label">DEFENSE</span>
-      <div id="defenseTabs"></div>
-    </div>
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="modeOffenseBtn">Offense</button>
+    <button class="mode-btn" id="modeDefenseBtn">Defense</button>
   </div>
 
-  <div class="lineup-panel" id="lineupPanel"></div>
-  <div class="builder-panel" id="builderPanel" style="display:none;"></div>
-  <div class="builder-panel" id="runBuilderPanel" style="display:none;"></div>
+  <div id="offenseControls">
+    <div class="tabs-row">
+      <div class="tab-group">
+        <span class="tab-label">OFFENSE</span>
+        <div id="playTabs"></div>
+      </div>
+    </div>
+
+    <details class="collapsible" open>
+      <summary>Lineup</summary>
+      <div class="lineup-panel" id="lineupPanel"></div>
+    </details>
+
+    <details class="collapsible" id="builderDetails" style="display:none;" open>
+      <summary>Pass Builder</summary>
+      <div class="builder-panel" id="builderPanel"></div>
+    </details>
+
+    <details class="collapsible" id="runBuilderDetails" style="display:none;" open>
+      <summary>Run Builder</summary>
+      <div class="builder-panel" id="runBuilderPanel"></div>
+    </details>
+  </div>
+
+  <div id="defenseControls" style="display:none;">
+    <div class="tabs-row">
+      <div class="tab-group">
+        <span class="tab-label">DEFENSE</span>
+        <div id="defenseTabs"></div>
+      </div>
+    </div>
+
+    <details class="collapsible" open>
+      <summary>Lineup</summary>
+      <div class="lineup-panel" id="defenseLineupPanel"></div>
+    </details>
+
+    <details class="collapsible" id="defenseBuilderDetails" style="display:none;" open>
+      <summary>Defense Builder</summary>
+      <div class="builder-panel" id="defenseBuilderPanel"></div>
+    </details>
+  </div>
 
   <div class="board-shell">
     <svg id="field" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -444,6 +539,48 @@
   const RUN_PATH_KEYS = Object.keys(RUN_PATHS);
   const PATH_ORDER = RUN_PATH_ORDER.concat(ROUTE_ORDER); // combined dropdown: run paths first, then routes
   const QB_ACTION_LABELS = { handoff:'Handoff', delayedHandoff:'Delayed Handoff (Draw)', toss:'Toss' };
+
+  // ---------- defensive formation & action library ----------
+  // A single base shell: 2-2-1 (2 corners, 2 linebackers, 1 safety).
+  // CB_L/CB_R: outside, 5 yd off the LOS. LB_L/LB_R: 3 yd off the ball's
+  // centerline each way, 2 yd off the LOS. S: 12 yd off the LOS, in line
+  // with the offensive center.
+  function clampX(x){ return Math.max(60, Math.min(740, x)); }
+  const DEF_FORMATION = {
+    name: '2-2-1',
+    slots: ['CB_L','CB_R','LB_L','LB_R','S'],
+    positions(){
+      return {
+        CB_L: {x: LOS_X+5*YARD_PX, y: clampY(CENTER_Y-(2/3)*HALF_WIDTH)},
+        CB_R: {x: LOS_X+5*YARD_PX, y: clampY(CENTER_Y+(2/3)*HALF_WIDTH)},
+        LB_L: {x: LOS_X+2*YARD_PX, y: CENTER_Y-3*YARD_PX},
+        LB_R: {x: LOS_X+2*YARD_PX, y: CENTER_Y+3*YARD_PX},
+        S:    {x: LOS_X+12*YARD_PX, y: CENTER_Y}
+      };
+    }
+  };
+  const DEF_PATHS = {
+    stay: { label:'Stay', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx,y:sy}]; }},
+    blitz: { label:'Blitz', generate(sx,sy,slot){
+      // Corners get an angled edge rush (33° off straight, cutting inside
+      // toward the QB) instead of a straight-line charge, since that's how
+      // this defense actually runs it.
+      if (slot === 'CB_L' || slot === 'CB_R'){
+        const angle = 33*Math.PI/180;
+        const D = 15*YARD_PX;
+        const dyToward = slot === 'CB_L' ? 1 : -1; // angles inward toward the QB
+        return [{t:0,x:sx,y:sy},
+                {t:1, x:clampX(sx-Math.cos(angle)*D), y:clampY(sy+dyToward*Math.sin(angle)*D)}];
+      }
+      return [{t:0,x:sx,y:sy},{t:1,x:clampX(sx-15*YARD_PX),y:sy}];
+    }},
+    dropShallow: { label:'Drop Shallow', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:LOS_X+8*YARD_PX,y:sy}]; }},
+    dropDeep: { label:'Drop Deep', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:LOS_X+18*YARD_PX,y:sy}]; }},
+    shiftLeft: { label:'Shift (Left)', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx,y:clampY(sy-6*YARD_PX)}]; }},
+    shiftRight: { label:'Shift (Right)', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx,y:clampY(sy+6*YARD_PX)}]; }}
+  };
+  const DEF_PATH_ORDER = ['stay','blitz','dropShallow','dropDeep','shiftLeft','shiftRight'];
+  const DEF_ROLE_NAMES = { CB_L:'CB (L)', CB_R:'CB (R)', LB_L:'LB (L)', LB_R:'LB (R)', S:'Safety' };
 
   // ---------- formation library ----------
   // positions() returns each slot's pre-snap {x,y[,side]}. wrSlots lists
@@ -1141,6 +1278,11 @@
         }
       ]
     }
+  },
+  "customDefense": {
+    "name": "Custom Defense",
+    "desc": "<b>Custom Defense — 2-2-1.</b> Build your own coverage — assign an action to each of the five defenders.",
+    "routes": {}
   }
 };
 
@@ -1227,7 +1369,7 @@
   }
 
   const OFF_LABELS = {QB:'QB', C:'C', WR_L:'X', WR_S:'Z', WR_R:'Y', WR:'X', RB_L:'RB', RB_R:'RB', RB:'RB', WR1:'1', WR2:'2', WR3:'3'};
-  const DEF_LABELS = {CB_L:'C', CB_R:'C', NB:'N', S1:'S', S2:'S', RUSH:'R', FS:'F'};
+  const DEF_LABELS = {CB_L:'C', CB_R:'C', NB:'N', S1:'S', S2:'S', RUSH:'R', FS:'F', LB_L:'LB', LB_R:'LB', S:'S'};
 
   // ---------- roster & lineup assignment ----------
   // Static roster — edit this list directly to match your team.
@@ -1616,6 +1758,86 @@
     panel.appendChild(flipBtn);
   }
 
+  // ---------- custom defense builder ----------
+  const customDefense = { paths: {} }; // slot key -> DEF_PATH_ORDER key
+
+  function regenerateCustomDefense(){
+    const positions = DEF_FORMATION.positions();
+    const routes = {};
+    DEF_FORMATION.slots.forEach(slot=>{
+      if (!customDefense.paths[slot]) customDefense.paths[slot] = 'stay';
+      const pos = positions[slot];
+      routes[slot] = DEF_PATHS[customDefense.paths[slot]].generate(pos.x, pos.y, slot);
+    });
+    DEFENSES.customDefense.routes = routes;
+    const summary = DEF_FORMATION.slots
+      .filter(s => customDefense.paths[s] !== 'stay')
+      .map(s => (DEF_ROLE_NAMES[s]||s) + ': ' + DEF_PATHS[customDefense.paths[s]].label)
+      .join(', ');
+    DEFENSES.customDefense.desc = `<b>Custom Defense — 2-2-1.</b> ${summary || 'Everyone holding their base alignment.'}`;
+  }
+
+  function buildDefenseBuilderPanel(){
+    const panel = document.getElementById('defenseBuilderPanel');
+    panel.innerHTML = '';
+    DEF_FORMATION.slots.forEach(slot=>{
+      const chip = document.createElement('div');
+      chip.className = 'lineup-chip';
+      const role = document.createElement('span'); role.className='role'; role.textContent = DEF_ROLE_NAMES[slot]||slot;
+      const select = document.createElement('select');
+      DEF_PATH_ORDER.forEach(k=>{
+        const opt = document.createElement('option');
+        opt.value = k; opt.textContent = DEF_PATHS[k].label;
+        if ((customDefense.paths[slot]||'stay') === k) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.onchange = ()=>{
+        customDefense.paths[slot] = select.value;
+        regenerateCustomDefense();
+        drawRoutePreviews();
+        render();
+      };
+      chip.appendChild(role); chip.appendChild(select);
+      panel.appendChild(chip);
+    });
+  }
+
+  // Defense roster assignment — mirrors the offense lineup panel, but
+  // works across ALL defenses (Cover 2, Man-Free, Custom Defense), not
+  // just the custom one, same as offense's lineup panel does for every play.
+  const DEF_ASSIGNMENTS = {};
+
+  function buildDefenseLineupPanel(){
+    const panel = document.getElementById('defenseLineupPanel');
+    panel.innerHTML = '';
+    const def = DEFENSES[currentDefense];
+    Object.keys(def.routes).forEach(key=>{
+      const chip = document.createElement('div');
+      chip.className = 'lineup-chip';
+      const role = document.createElement('span');
+      role.className = 'role';
+      role.textContent = DEF_ROLE_NAMES[key] || key;
+      const select = document.createElement('select');
+      const blank = document.createElement('option');
+      blank.value = ''; blank.textContent = '—';
+      select.appendChild(blank);
+      ROSTER.forEach(name=>{
+        const opt = document.createElement('option');
+        opt.value = name; opt.textContent = name;
+        if (DEF_ASSIGNMENTS[key] === name) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.onchange = ()=>{
+        if (select.value) DEF_ASSIGNMENTS[key] = select.value;
+        else delete DEF_ASSIGNMENTS[key];
+        render();
+      };
+      chip.appendChild(role);
+      chip.appendChild(select);
+      panel.appendChild(chip);
+    });
+  }
+
   function drawPlayers(){
     playerLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
@@ -1639,8 +1861,12 @@
       const pos = getPosAtT(def.routes[key], t);
       const g = el('g',{});
       g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:18, fill:'none', stroke:'var(--def-blue)','stroke-width':3}));
-      const txt = el('text',{x:pos.x, y:pos.y+5, 'text-anchor':'middle','font-size':13,'font-weight':700,fill:'var(--def-blue)','font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
-      txt.textContent = DEF_LABELS[key] || key;
+      const assigned = DEF_ASSIGNMENTS[key];
+      const label = assigned ? (assigned.length > 6 ? assigned.slice(0,6) : assigned) : (DEF_LABELS[key] || key);
+      const txt = el('text',{x:pos.x, y:pos.y+5, 'text-anchor':'middle',
+        'font-size': assigned ? 10.5 : 13, 'font-weight':700, fill:'var(--def-blue)',
+        'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
+      txt.textContent = label;
       g.appendChild(txt);
       playerLayer.appendChild(g);
     });
@@ -1716,21 +1942,21 @@
     currentPlay = key;
     t = 0; playing = false;
     document.getElementById('playBtn').textContent = '▶';
-    const builderPanel = document.getElementById('builderPanel');
-    const runBuilderPanel = document.getElementById('runBuilderPanel');
+    const builderDetails = document.getElementById('builderDetails');
+    const runBuilderDetails = document.getElementById('runBuilderDetails');
     if (key === 'customPass'){
-      builderPanel.style.display = 'flex';
+      builderDetails.style.display = 'block';
       regenerateCustomPass();
       buildBuilderPanel();
     } else {
-      builderPanel.style.display = 'none';
+      builderDetails.style.display = 'none';
     }
     if (key === 'customRun'){
-      runBuilderPanel.style.display = 'flex';
+      runBuilderDetails.style.display = 'block';
       regenerateCustomRun();
       buildRunBuilderPanel();
     } else {
-      runBuilderPanel.style.display = 'none';
+      runBuilderDetails.style.display = 'none';
     }
     document.getElementById('playDesc').innerHTML = PLAYS[key].desc;
     document.querySelectorAll('#playTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
@@ -1741,8 +1967,17 @@
 
   function setDefense(key){
     currentDefense = key;
+    const defenseBuilderDetails = document.getElementById('defenseBuilderDetails');
+    if (key === 'customDefense'){
+      defenseBuilderDetails.style.display = 'block';
+      regenerateCustomDefense();
+      buildDefenseBuilderPanel();
+    } else {
+      defenseBuilderDetails.style.display = 'none';
+    }
     document.querySelectorAll('#defenseTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
     drawRoutePreviews();
+    buildDefenseLineupPanel();
     render();
   }
 
@@ -1800,12 +2035,28 @@
     speed = Number(e.target.value);
   };
 
+  // ---------- offense/defense mode toggle ----------
+  // Purely a UI-declutter toggle: both offense and defense still animate
+  // together on the field regardless of mode. This just controls which
+  // set of tabs/builder panels are visible, so mobile isn't showing both
+  // control sets — and every future control (defense builder, etc.) has
+  // a natural home to slot into.
+  function setMode(mode){
+    document.getElementById('offenseControls').style.display = mode === 'offense' ? 'block' : 'none';
+    document.getElementById('defenseControls').style.display = mode === 'defense' ? 'block' : 'none';
+    document.getElementById('modeOffenseBtn').classList.toggle('active', mode === 'offense');
+    document.getElementById('modeDefenseBtn').classList.toggle('active', mode === 'defense');
+  }
+  document.getElementById('modeOffenseBtn').onclick = ()=> setMode('offense');
+  document.getElementById('modeDefenseBtn').onclick = ()=> setMode('defense');
+
   // ---------- init ----------
   drawField();
   buildLayers();
   buildTabs();
   setPlay('slantFlat');
   setDefense('cover2');
+  setMode('offense');
 
   // ---------- offline caching ----------
   // Registers a service worker so, after the first successful load,
