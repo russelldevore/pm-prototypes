@@ -12,6 +12,8 @@ across fraud detection, risk decisioning, and identity infrastructure.
 | Project | Description | Stack |
 |---------|-------------|-------|
 | [Fraud Signal Dashboard](https://russelldevore.github.io/pm-prototypes/fraud-dashboard/risk-review.html) | Risk scoring and signal visualization UI | HTML, CSS, JS |
+|[Flag Flow Trainer](https://russelldevore.github.io/pm-prototypes/flag-flow-trainer.html) | Teaching tool for youth flag football | HTML, CSS, JS |
+
 
 ---
 
