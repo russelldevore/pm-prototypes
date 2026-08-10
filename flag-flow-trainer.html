@@ -281,17 +281,18 @@
     position:fixed; inset:0;
     background:rgba(0,0,0,0.5);
     z-index:1000;
-    display:flex; align-items:flex-end; justify-content:center;
+    display:flex; align-items:flex-start; justify-content:center;
+    padding-top:5vh;
   }
   .assign-sheet{
     width:100%; max-width:480px;
     background:var(--board-dark);
     border:1px solid var(--panel-line);
-    border-radius:16px 16px 0 0;
+    border-radius:16px;
     padding:16px;
-    max-height:70vh;
+    max-height:85vh;
     overflow-y:auto;
-    box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
   }
   .assign-sheet h3{
     font-family:'Bradley Hand','Segoe Print','Chalkboard SE','Comic Sans MS',cursive;
@@ -347,6 +348,7 @@
     cursor:pointer;
   }
 
+  #playDescDetails{ margin-top:18px; }
   details.collapsible{
     margin-bottom:10px;
     border:1px solid var(--panel-line);
@@ -401,68 +403,67 @@
     <p class="subtitle">5-on-5 playbook trainer — watch the play unfold, snap to whistle.</p>
   </header>
 
-  <div class="mode-toggle">
-    <button class="mode-btn active" id="modeOffenseBtn">Offense</button>
-    <button class="mode-btn" id="modeDefenseBtn">Defense</button>
-  </div>
-  <div class="mode-toggle">
-    <button class="mode-btn active" id="interactionClassicBtn">Classic</button>
-    <button class="mode-btn" id="interactionTapBtn">Tap to Assign</button>
-  </div>
+  <details class="collapsible" id="setupDetails" open>
+    <summary>Setup</summary>
+    <div style="padding:10px 14px 14px;">
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="modeOffenseBtn">Offense</button>
+        <button class="mode-btn" id="modeDefenseBtn">Defense</button>
+      </div>
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="interactionClassicBtn">Classic</button>
+        <button class="mode-btn" id="interactionTapBtn">Tap to Assign</button>
+      </div>
 
-  <div class="tap-controls" id="tapControls" style="display:none;"></div>
+      <div class="tap-controls" id="tapControls" style="display:none;"></div>
 
-  <div id="offenseControls">
-    <div class="tabs-row" id="offenseTabsRow">
-      <div class="tab-group">
-        <span class="tab-label">OFFENSE</span>
-        <div id="playTabs"></div>
+      <div id="offenseControls">
+        <div class="tabs-row" id="offenseTabsRow">
+          <div class="tab-group">
+            <span class="tab-label">OFFENSE</span>
+            <div id="playTabs"></div>
+          </div>
+        </div>
+
+        <details class="collapsible" id="lineupDetails" open>
+          <summary>Lineup</summary>
+          <div class="lineup-panel" id="lineupPanel"></div>
+        </details>
+
+        <details class="collapsible" id="builderDetails" style="display:none;" open>
+          <summary>Pass Builder</summary>
+          <div class="builder-panel" id="builderPanel"></div>
+        </details>
+
+        <details class="collapsible" id="runBuilderDetails" style="display:none;" open>
+          <summary>Run Builder</summary>
+          <div class="builder-panel" id="runBuilderPanel"></div>
+        </details>
+      </div>
+
+      <div id="defenseControls" style="display:none;">
+        <div class="tabs-row" id="defenseTabsRow">
+          <div class="tab-group">
+            <span class="tab-label">DEFENSE</span>
+            <div id="defenseTabs"></div>
+          </div>
+        </div>
+
+        <details class="collapsible" id="defenseLineupDetails" open>
+          <summary>Lineup</summary>
+          <div class="lineup-panel" id="defenseLineupPanel"></div>
+        </details>
+
+        <details class="collapsible" id="defenseBuilderDetails" style="display:none;" open>
+          <summary>Defense Builder</summary>
+          <div class="builder-panel" id="defenseBuilderPanel"></div>
+        </details>
       </div>
     </div>
-
-    <details class="collapsible" id="lineupDetails" open>
-      <summary>Lineup</summary>
-      <div class="lineup-panel" id="lineupPanel"></div>
-    </details>
-
-    <details class="collapsible" id="builderDetails" style="display:none;" open>
-      <summary>Pass Builder</summary>
-      <div class="builder-panel" id="builderPanel"></div>
-    </details>
-
-    <details class="collapsible" id="runBuilderDetails" style="display:none;" open>
-      <summary>Run Builder</summary>
-      <div class="builder-panel" id="runBuilderPanel"></div>
-    </details>
-  </div>
-
-  <div id="defenseControls" style="display:none;">
-    <div class="tabs-row" id="defenseTabsRow">
-      <div class="tab-group">
-        <span class="tab-label">DEFENSE</span>
-        <div id="defenseTabs"></div>
-      </div>
-    </div>
-
-    <details class="collapsible" id="defenseLineupDetails" open>
-      <summary>Lineup</summary>
-      <div class="lineup-panel" id="defenseLineupPanel"></div>
-    </details>
-
-
-    <details class="collapsible" id="defenseBuilderDetails" style="display:none;" open>
-      <summary>Defense Builder</summary>
-      <div class="builder-panel" id="defenseBuilderPanel"></div>
-    </details>
-  </div>
+  </details>
 
   <div class="board-shell">
     <svg id="field" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg"></svg>
-  </div>
-
-  <div class="info-bar">
-    <div class="play-desc" id="playDesc"></div>
-    <div class="phase-badge" id="phaseBadge">Pre-snap</div>
   </div>
 
   <div class="controls">
@@ -478,11 +479,21 @@
     </select>
   </div>
 
-  <div class="legend">
-    <span><i class="swatch" style="background:var(--off-red)"></i> Offense</span>
-    <span><i class="swatch" style="background:var(--def-blue)"></i> Defense</span>
-    <span><i class="swatch" style="background:var(--flag-gold)"></i> Ball / read</span>
-  </div>
+  <details class="collapsible" id="playDescDetails" open>
+    <summary>Flag Flow Play description</summary>
+    <div style="padding:10px 14px 14px;">
+      <div class="info-bar">
+        <div class="play-desc" id="playDesc"></div>
+        <div class="phase-badge" id="phaseBadge">Pre-snap</div>
+      </div>
+
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--off-red)"></i> Offense</span>
+        <span><i class="swatch" style="background:var(--def-blue)"></i> Defense</span>
+        <span><i class="swatch" style="background:var(--flag-gold)"></i> Ball / read</span>
+      </div>
+    </div>
+  </details>
 
   <footer>Prototype teaching tool — canned plays &amp; coverages, built to expand later.</footer>
 </div>
