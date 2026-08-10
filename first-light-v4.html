@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>First Light — v4 (Energy & Trip Context)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@500;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --parchment:#F3EFE2; --sage:#B9CBB2; --sage-dim:#7C8F79;
+    --ochre:#C98A4B; --ochre-bright:#E3AA6E; --blue:#8FB6C6; --danger:#D98567;
+    --panel-glass: rgba(18,22,18,0.62); --panel-line: rgba(243,239,226,0.16);
+  }
+  *{box-sizing:border-box;} html,body{margin:0;padding:0;}
+  body{ font-family:'Source Serif 4', serif; color:var(--parchment); min-height:100vh; position:relative; overflow-x:hidden; }
+  .scene{ position:fixed; inset:0; z-index:0; overflow:hidden; }
+  .sky{ position:absolute; inset:0; transition:background 1.2s ease; }
+  .sun{ position:absolute; border-radius:50%; filter:blur(2px); transition:all 1.2s ease; }
+  .ridge{ position:absolute; left:-5%; right:-5%; }
+  .fog{ position:absolute; left:-20%; width:140%; height:120px; background:linear-gradient(90deg, transparent, rgba(255,255,255,0.10), transparent); animation:drift 22s linear infinite; }
+  @keyframes drift{ from{transform:translateX(0);} to{transform:translateX(20%);} }
+  .critter{ position:absolute; opacity:0; transition:opacity 1.4s ease 0.2s; }
+  .critter.show{ opacity:0.85; }
+
+  .status-bar{ position:fixed; top:16px; left:16px; right:16px; z-index:5; display:flex; justify-content:space-between; gap:6px; flex-wrap:wrap; }
+  .badge{ background:rgba(18,22,18,0.55); border:1px solid var(--panel-line); border-radius:20px; padding:6px 10px; display:flex; align-items:center; gap:5px; font-family:'IBM Plex Mono',monospace; font-size:9.5px; color:var(--blue); backdrop-filter:blur(3px); }
+  .badge.wind{color:var(--blue);} .badge.awareness{color:var(--ochre-bright);} .badge.position{color:var(--sage);} .badge.energy{color:#E3C46E;}
+  .badge svg{ width:12px; height:12px; transition:transform 1s ease; flex-shrink:0; }
+
+  .wrap{ position:relative; z-index:1; max-width:640px; margin:0 auto; padding:70px 20px 80px; }
+  .eyebrow{ font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--sage); margin:0 0 6px; }
+  h1{ font-family:'Big Shoulders', sans-serif; font-weight:800; text-transform:uppercase; letter-spacing:.02em; font-size:clamp(28px,7vw,42px); line-height:.95; margin:0 0 4px; text-shadow:0 2px 18px rgba(0,0,0,0.5); }
+  .sub{ color:var(--sage); font-size:15px; margin:0 0 22px; }
+
+  .trail{ display:flex; align-items:center; gap:4px; margin:0 0 26px; }
+  .wp{ width:30px; height:30px; border-radius:50%; border:2px solid var(--panel-line); display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600; color:var(--sage-dim); background:rgba(18,22,18,0.5); flex-shrink:0; transition:all .35s ease; backdrop-filter:blur(3px); }
+  .wp.done{ border-color:var(--ochre); color:var(--ochre-bright); background:rgba(40,28,14,0.7); }
+  .wp.current{ border-color:var(--ochre-bright); color:var(--parchment); background:var(--ochre); box-shadow:0 0 0 4px rgba(201,138,75,0.25); }
+  .wp.skip{ opacity:0.35; }
+  .seg{ flex:1; height:2px; background:var(--panel-line); position:relative; }
+  .seg .fill{ position:absolute; inset:0; background:var(--ochre); width:0%; transition:width .5s ease; }
+  .seg.done .fill{ width:100%; }
+
+  .card{ background:var(--panel-glass); backdrop-filter:blur(6px); border:1px solid var(--panel-line); border-radius:6px; padding:22px 20px; position:relative; box-shadow:0 20px 60px rgba(0,0,0,0.35); }
+  .card::before{ content:''; position:absolute; top:0; left:0; width:3px; height:100%; background:var(--ochre); border-radius:6px 0 0 6px; }
+  .card.bust::before{ background:var(--danger); }
+  .field-label{ font-family:'IBM Plex Mono', monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--sage); display:flex; justify-content:space-between; margin-bottom:14px; border-bottom:1px solid var(--panel-line); padding-bottom:10px; }
+  .narrative{ font-size:17px; line-height:1.6; margin:0 0 20px; }
+  .narrative b{ color:var(--ochre-bright); font-weight:600; }
+
+  .ctx-group{ margin-bottom:16px; }
+  .ctx-label{ font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--sage-dim); margin-bottom:6px; }
+  .ctx-pills{ display:flex; gap:8px; }
+  .pill{ flex:1; text-align:center; background:rgba(0,0,0,0.28); border:1px solid var(--panel-line); border-radius:20px; padding:9px 8px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--sage); cursor:pointer; transition:all .15s; }
+  .pill.on{ background:var(--ochre); border-color:var(--ochre); color:#1B1410; font-weight:600; }
+  .pill:hover:not(.on){ border-color:var(--ochre); }
+
+  .opts{ display:flex; flex-direction:column; gap:10px; }
+  .opt{ text-align:left; background:rgba(0,0,0,0.28); color:var(--parchment); border:1px solid var(--panel-line); border-radius:4px; padding:14px 16px; font-family:'Source Serif 4',serif; font-size:16px; cursor:pointer; transition:border-color .2s, background .2s, transform .1s; line-height:1.4; }
+  .opt .tag{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ochre-bright); display:block; margin-bottom:4px; letter-spacing:.06em; }
+  .opt:hover{ border-color:var(--ochre); background:rgba(0,0,0,0.4); }
+  .opt:active{ transform:scale(.99); }
+  .opt:focus-visible{ outline:2px solid var(--ochre-bright); outline-offset:2px; }
+
+  .outcome{ animation:fade .4s ease; }
+  @keyframes fade{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+  .outcome-text{ font-size:17px; line-height:1.6; margin:0 0 14px; }
+  .energy-note{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:#E3C46E; margin:0 0 16px; letter-spacing:.03em; }
+  .rubric{ background:rgba(0,0,0,0.3); border:1px solid var(--panel-line); padding:14px 16px; margin:0 0 20px; border-radius:4px; }
+  .rubric .rt{ font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--sage); margin-bottom:8px; }
+  .rubric p{ margin:0; font-size:15px; line-height:1.55; }
+  .score{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:11px; padding:2px 8px; border-radius:10px; margin-right:8px; letter-spacing:.04em; }
+  .score.strong{ background:rgba(185,203,178,.22); color:var(--sage); }
+  .score.risky{ background:rgba(217,133,103,.22); color:var(--danger); }
+  .score.mixed{ background:rgba(227,170,110,.22); color:var(--ochre-bright); }
+
+  .next-btn{ width:100%; background:var(--ochre); color:#1B1410; border:none; font-family:'Big Shoulders',sans-serif; font-weight:700; text-transform:uppercase; letter-spacing:.04em; font-size:17px; padding:14px; border-radius:4px; cursor:pointer; }
+  .next-btn:hover{ background:var(--ochre-bright); }
+  .next-btn.bust{ background:var(--danger); }
+  .next-btn.bust:hover{ background:#e29b83; }
+
+  .debrief-title{ font-family:'Big Shoulders',sans-serif; font-weight:800; text-transform:uppercase; font-size:26px; margin:0 0 4px; text-shadow:0 2px 18px rgba(0,0,0,0.5); }
+  .attr{ margin-bottom:16px; }
+  .attr-head{ display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--sage); margin-bottom:6px; }
+  .bar{ height:7px; background:rgba(0,0,0,0.35); border-radius:4px; overflow:hidden; }
+  .bar .fill{ height:100%; background:linear-gradient(90deg,var(--ochre),var(--ochre-bright)); border-radius:4px; transition:width .8s ease; }
+  .bar .fill.energy{ background:linear-gradient(90deg,#8a6d2f,#E3C46E); }
+  .restart{ margin-top:24px; background:rgba(0,0,0,0.3); border:1px solid var(--panel-line); color:var(--sage); font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:.06em; text-transform:uppercase; padding:10px 16px; border-radius:4px; cursor:pointer; }
+  .restart:hover{ border-color:var(--ochre); color:var(--ochre-bright); }
+  .pathnote{ margin-top:18px; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--sage-dim); border-top:1px dashed var(--panel-line); padding-top:12px; line-height:1.6; }
+
+  @media (prefers-reduced-motion: reduce){ .outcome{ animation:none; } .bar .fill, .seg .fill{ transition:none; } .fog{ animation:none; } }
+</style>
+</head>
+<body>
+
+<div class="scene" id="scene">
+  <div class="sky" id="sky"></div>
+  <div class="sun" id="sun"></div>
+  <svg class="ridge" style="bottom:26%;" viewBox="0 0 800 200" preserveAspectRatio="none" height="220"><path d="M0,200 L0,120 L80,90 L160,130 L260,70 L340,110 L430,60 L520,120 L610,80 L700,130 L800,90 L800,200 Z" fill="#101a14" opacity="0.55"/></svg>
+  <svg class="ridge" style="bottom:14%;" viewBox="0 0 800 220" preserveAspectRatio="none" height="240"><path d="M0,220 L0,150 L100,100 L200,160 L300,90 L400,140 L500,80 L600,150 L700,110 L800,160 L800,220 Z" fill="#0c1610" opacity="0.75"/></svg>
+  <div class="fog" style="bottom:22%;"></div>
+  <svg class="ridge" style="bottom:0;" viewBox="0 0 800 260" preserveAspectRatio="none" height="280"><path d="M0,260 L0,190 L60,140 L140,180 L220,120 L300,175 L380,110 L460,170 L560,130 L650,185 L730,145 L800,190 L800,260 Z" fill="#070d09" opacity="0.95"/></svg>
+  <svg id="elk" class="critter" style="bottom:6%; left:58%; width:90px;" viewBox="0 0 200 140">
+    <g fill="#050805">
+      <ellipse cx="100" cy="90" rx="55" ry="26"/>
+      <ellipse cx="150" cy="65" rx="20" ry="18"/>
+      <path d="M155,50 Q170,10 190,25 Q175,20 170,35 M158,48 Q175,20 200,20 Q180,25 178,40" stroke="#050805" stroke-width="4" fill="none"/>
+      <rect x="60" y="105" width="8" height="30"/><rect x="85" y="108" width="8" height="27"/>
+      <rect x="115" y="108" width="8" height="27"/><rect x="140" y="105" width="8" height="30"/>
+    </g>
+  </svg>
+</div>
+
+<div class="status-bar">
+  <div class="badge wind"><svg id="windArrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M12 5l-5 5M12 5l5 5"/></svg><span id="windText">WIND: FAVORABLE</span></div>
+  <div class="badge awareness"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg><span id="awareText">UNAWARE</span></div>
+  <div class="badge position"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L4 7v10l8 5 8-5V7l-8-5Z"/></svg><span id="posText">WORKABLE</span></div>
+  <div class="badge energy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 11-14h-7l1-6Z"/></svg><span id="enText">FRESH</span></div>
+</div>
+
+<div class="wrap" id="app"></div>
+
+<script>
+/* ---------- content ---------- */
+const ARCH = { AGGRESSIVE:'Aggressive', CAUTIOUS:'Cautious', TACTICAL:'Tactical' };
+const POS_LADDER = ['poor','workable','strong'];
+const EN_LADDER = ['spent','taxed','fresh'];
+
+function initState(){ return {
+  wind:'favorable', awareness:'unaware', position:'workable', energy:'fresh', windSecured:false,
+  ctx:{time:'weekend', land:'public'},
+  scores:{patience:0, wind:0, terrain:0, ethics:0, energyMgmt:0}
+}; }
+let S = initState();
+let ctxSel = {time:'weekend', land:'public'}; // pre-scenario selection, copied into S at Begin
+
+function step(ladder, val, dir){ let i=ladder.indexOf(val)+dir; i=Math.max(0,Math.min(ladder.length-1,i)); return ladder[i]; }
+function applyScores(d){ Object.keys(d).forEach(k=>S.scores[k]+=d[k]); }
+
+/* ---- context-aware rubric ---- */
+const BASE_DELTAS = {
+  [ARCH.AGGRESSIVE]:{patience:-1,wind:-1,terrain:1,ethics:0},
+  [ARCH.CAUTIOUS]:{patience:1,wind:1,terrain:-1,ethics:0},
+  [ARCH.TACTICAL]:{patience:1,wind:2,terrain:2,ethics:0}
+};
+function toneFor(arch, ctx){
+  if(arch===ARCH.TACTICAL) return 'strong';
+  if(arch===ARCH.AGGRESSIVE) return ctx.time==='weekend' ? 'strong' : 'mixed';
+  return ctx.time==='weekend' ? 'risky' : 'strong';
+}
+function contextClause(arch, ctx){
+  if(arch===ARCH.AGGRESSIVE){
+    if(ctx.time==='weekend') return "With only a weekend on this tag, spending ground fast is the correct trade.";
+    if(ctx.land==='private') return "With a full week on private ground and this herd not going anywhere, the downside of pushing hard here is smaller than it looks.";
+    return "But burning ground fast with days still left on pressured public land risks tipping off every other hunter working this drainage.";
+  }
+  if(arch===ARCH.CAUTIOUS){
+    return ctx.time==='weekend' ? "But patience is a luxury a single weekend often can't afford." : "Patience is exactly what a full week buys you — this is the correct trade when you've got days to spend.";
+  }
+  return "The tactical read holds up regardless of how much time or ground pressure you're working with.";
+}
+function energyMgmtDelta(arch, ctx){
+  if(arch===ARCH.TACTICAL) return 1;
+  if(arch===ARCH.AGGRESSIVE){
+    if(ctx.time==='weekend') return 1;
+    return ctx.land==='private' ? 0 : -1;
+  }
+  return ctx.time==='weekend' ? -1 : 1;
+}
+function contextLessonClause(ctx){
+  if(ctx.time==='week' && ctx.land==='public') return " On pressured public ground, a blown stalk doesn't just cost this animal — it tells every other hunter working this drainage where the elk went.";
+  if(ctx.land==='private') return " The herd's not going anywhere on this ground, though — you'll likely get another look before you're done here.";
+  if(ctx.time==='weekend') return " With only a weekend on this tag, a blown stalk like this one costs a big share of the time you had.";
+  return "";
+}
+function rubric(arch, label, coreText){
+  const ctx = S.ctx;
+  return { tone: toneFor(arch, ctx), label, text: coreText + " " + contextClause(arch, ctx), deltas: BASE_DELTAS[arch] };
+}
+function applyArchScores(arch){ applyScores(BASE_DELTAS[arch]); applyScores({energyMgmt: energyMgmtDelta(arch, S.ctx)}); }
+
+/* ---- Decision 1 ---- */
+const D1 = {
+  label:"DECISION 1 OF 3 — APPROACH",
+  narrative:`You're geared up at the truck. The draw is a 40-minute hike in the dark. <b>What's your move?</b>`,
+  scene:'predawn',
+  options:[
+    {arch:ARCH.AGGRESSIVE, tag:"Move Now", text:"Move in now under headlamp — get close before thermals shift.",
+      outcome:"You close the distance fast and quiet in the dark. You reach the edge of the draw just as the sky starts to gray — but you can already feel the air starting to turn against you."},
+    {arch:ARCH.CAUTIOUS, tag:"Wait For Light", text:"Wait for first light and glass from a distance before committing.",
+      outcome:"You hang back on a knob overlooking the draw mouth. Light comes up clean and the wind stays honest — but you're further back than you'd like, and the day's already moving without you."},
+    {arch:ARCH.TACTICAL, tag:"Circle Wide", text:"Circle wide and approach from above, staying downwind of the forecast thermal.",
+      outcome:"It costs you 20 extra minutes, but you come in from a ridge above the draw — already positioned for the wind shift before it even happens."}
+  ]
+};
+function resolveD1(opt){
+  const enBefore = S.energy;
+  applyArchScores(opt.arch);
+  if(opt.arch===ARCH.AGGRESSIVE){ S.position='strong'; S.wind='compromised'; S.energy=step(EN_LADDER,S.energy,-1); }
+  else if(opt.arch===ARCH.CAUTIOUS){ S.position='poor'; }
+  else { S.position='strong'; S.windSecured=true; S.energy=step(EN_LADDER,S.energy,-1); }
+  return { outcome: opt.outcome, rubric: rubric(opt.arch, 'Approach Style',
+      opt.arch===ARCH.AGGRESSIVE ? "Aggressive positioning gains ground fast, right when it's most available." :
+      opt.arch===ARCH.CAUTIOUS ? "Cautious play protects your wind and keeps things quiet before you've even engaged." :
+      "Playing for the wind you expect, not just the wind you have, is the harder read — and it usually pays."),
+    enBefore, enAfter:S.energy };
+}
+
+/* ---- Decision 2 ---- */
+function D2(){
+  const opening = S.wind==='favorable'
+    ? "The wind is still holding steady in your favor as you reach the draw mouth. Fresh tracks, and one pile of scat still warm to the touch."
+    : "You reach the draw mouth breathing a little harder than you'd like — you can feel the air starting to shift against you already. Fresh tracks, and one pile of scat still warm to the touch.";
+  return { label:"DECISION 2 OF 3 — ON SIGN", narrative: opening + ` <b>What now?</b>`, scene:'dawn',
+    options:[
+      {arch:ARCH.AGGRESSIVE, tag:"Push In", text:"Push into the timber to look for the bull directly."},
+      {arch:ARCH.CAUTIOUS, tag:"Back Out & Glass", text:"Back out to the downwind edge, set up, and glass/wait."},
+      {arch:ARCH.TACTICAL, tag:"Call", text:"Start calling to locate him."}
+    ]};
+}
+function resolveD2(opt){
+  const enBefore = S.energy;
+  applyArchScores(opt.arch);
+  if(opt.arch===ARCH.AGGRESSIVE){
+    S.energy = step(EN_LADDER, S.energy, -1);
+    if(S.wind!=='favorable'){ S.energy = step(EN_LADDER, S.energy, -1); return {hardStop: hardStop('windBeatYou'), enBefore, enAfter:S.energy}; }
+    S.awareness='alerted'; S.position='strong';
+    return { outcome:"You slip in slow and deliberate. At 25 yards you catch movement through the timber — he's up, ears forward, staring your direction. Hasn't bolted. Not yet.",
+      rubric: rubric(opt.arch,'Sign Reading',"Pushing into warm sign directly is a real gamble on the animal's awareness."), enBefore, enAfter:S.energy };
+  }
+  if(opt.arch===ARCH.CAUTIOUS){
+    S.position = step(POS_LADDER, S.position, +1);
+    S.energy = step(EN_LADDER, S.energy, +1);
+    return { outcome:"You settle in on a deadfall on the downwind edge. Minutes pass. Then movement — the bull, still unaware, working slowly through the timber roughly your direction.",
+      rubric: rubric(opt.arch,'Sign Reading',"Reading warm sign as a cue to slow down, not speed up, is the harder instinct to build."), enBefore, enAfter:S.energy };
+  }
+  S.position = step(POS_LADDER, S.position, -1);
+  return { outcome:"A soft cow call gets no response. A bugle five minutes later gets answered — by a different bull, well off to your east — and for a few minutes your attention (and position) drifts toward him instead.",
+    rubric: rubric(opt.arch,'Sign Reading',"Calling this early can relocate your own focus as easily as it draws the animal in."), enBefore, enAfter:S.energy };
+}
+
+/* ---- transition: decay + recovery check ---- */
+function afterD2(){
+  if(!S.windSecured && S.wind==='favorable'){ S.wind='compromised'; }
+  if(S.wind==='compromised' && S.position!=='strong'){ return 'recovery'; }
+  return 'd3choice';
+}
+
+const RECOVERY = {
+  label:"REASSESS", narrative:`The wind's not doing you favors, and you don't love where you're standing. <b>What's the call?</b>`, scene:'dawn',
+  options:[
+    {tag:"Push North", text:"Push north to a parallel finger and reset your approach.", type:'reset'},
+    {tag:"Fold For Now", text:"Call it here. Back out clean, try again this evening.", type:'fold'}
+  ]
+};
+function resolveRecovery(opt){
+  const enBefore = S.energy;
+  if(opt.type==='reset'){ S.position='workable'; S.wind='favorable'; S.energy=step(EN_LADDER,S.energy,-1); return {toD3:true, enBefore, enAfter:S.energy}; }
+  S.energy = step(EN_LADDER, S.energy, +1);
+  const foldText = S.ctx.time==='weekend'
+    ? "Folding here on a single weekend is a real cost — you may not get another crack at this line before you're out of time. But a blown stalk would've cost you the whole tag, not just the morning."
+    : "With days still ahead of you, folding here is the clearly correct, low-cost call. This line will still be here tonight.";
+  return {ending:'fold', enBefore, enAfter:S.energy, foldText};
+}
+
+/* ---- Decision 3 ---- */
+function D3(){
+  const opening = S.awareness==='unaware'
+    ? "The bull is bedded 80 yards up-slope, quartering away, unaware of you."
+    : "The bull is on his feet 60 yards up-slope, head up, watching your general direction — not spooked, but not settled either.";
+  return { label:"DECISION 3 OF 3 — THE ENCOUNTER", narrative: opening + ` <b>Final call.</b>`, scene:'encounter',
+    options:[
+      {arch:ARCH.AGGRESSIVE, tag:"Stalk Now", text:"Attempt the stalk now while the wind holds."},
+      {arch:ARCH.CAUTIOUS, tag:"Wait Him Out", text:"Hold your position and wait for a better angle or him to stand on his own."},
+      {arch:ARCH.TACTICAL, tag:"Back Out & Call", text:"Back off and try to call him into a better position instead."}
+    ]};
+}
+function resolveD3(opt){
+  const enBefore = S.energy;
+  applyArchScores(opt.arch);
+  if(opt.arch===ARCH.AGGRESSIVE){
+    S.energy = step(EN_LADDER, S.energy, -1);
+    if(enBefore==='spent'){ return {hardStop: hardStop('legsGaveOut'), enBefore, enAfter:S.energy}; }
+    if(S.wind==='blown'){ return {hardStop: hardStop('soClose'), enBefore, enAfter:S.energy}; }
+    S.position='strong';
+    return { outcome:"You close the distance in careful, deliberate steps, wind still holding. The angle opens up clean.",
+      rubric: rubric(opt.arch,'Shot Ethics & Patience',"Committing while conditions are still in your favor trusts a good read over hesitation."),
+      toShot:true, enBefore, enAfter:S.energy };
+  }
+  if(opt.arch===ARCH.CAUTIOUS){
+    if(S.wind!=='favorable'){ return {hardStop: hardStop('windCaughtUp'), enBefore, enAfter:S.energy}; }
+    return { outcome:"You hold. Minutes pass, wind steady, the bull settles further, unaware.",
+      rubric: rubric(opt.arch,'Shot Ethics & Patience',"Patience only works as long as the wind and your body let it."),
+      toShot:true, enBefore, enAfter:S.energy };
+  }
+  S.energy = step(EN_LADDER, S.energy, -1);
+  if(S.awareness==='alerted'){ return {hardStop: hardStop('oneCallToo'), enBefore, enAfter:S.energy}; }
+  S.position='strong';
+  return { outcome:"The soft chirp does exactly what you hoped — he turns, unbothered, and closes the distance on his own terms.",
+    rubric: rubric(opt.arch,'Shot Ethics & Patience',"Calling to a still-unaware animal, not an alert one, is the version of this move that actually works."),
+    toShot:true, enBefore, enAfter:S.energy };
+}
+
+function hardStop(kind){
+  const ctxClause = contextLessonClause(S.ctx);
+  const map = {
+    windBeatYou: {title:"WIND BEAT YOU TO IT", scene:'predawn', text:"Ten yards in, a sharp bark and crashing brush moving fast downhill. Busted — the wind you were already fighting made the call for you before you got the chance to.", lesson:"When wind's already compromised, pushing into close sign trades a bad hand for a worse one." + ctxClause},
+    soClose: {title:"SO CLOSE", scene:'encounter', text:"You're 15 yards from a shot when the wind finally swirls behind you. A blown breath, a crash, gone. It was close enough to taste.", lesson:"An aggressive close on a compromised wind can still work — until it doesn't." + ctxClause},
+    windCaughtUp: {title:"THE WIND FINALLY CAUGHT UP", scene:'encounter', text:"You wait nearly 40 minutes. Patient, textbook — right up until the thermal you'd been racing all morning finally arrives and swirls. He's up and gone before you see him stand.", lesson:"Patience is usually the right instinct, but it has a clock on it — this is what happens when the debt from earlier in the hunt finally comes due."},
+    oneCallToo: {title:"ONE CALL TOO MANY", scene:'encounter', text:"The chirp gets his head up immediately — he was already watching your direction, and the call was the last nudge he needed to ease off into heavier cover.", lesson:"Calling to an animal that's already alert, rather than one still unaware, usually confirms his suspicion instead of drawing him in."},
+    legsGaveOut: {title:"LEGS GAVE OUT", scene:'encounter', text:"You commit to the stalk, but your legs don't have what the final careful steps need. A stumble, a snapped twig underfoot, and the angle's gone before you're within range.", lesson:"Fatigue doesn't announce itself as fear or bad wind — it just quietly makes the careful movement you need less possible. This is what running the tank to empty costs late in a stalk." + ctxClause}
+  };
+  return map[kind];
+}
+
+/* ---- Debrief endings ---- */
+const SHOT_ENDINGS = {
+  strong:{title:"CLEAN SHOT", text:"At full draw, the angle opens up clean. This is about as good as a still hunt gets — a strong position, a cooperative wind, and a shot you can commit to without a second thought.", ethics:2},
+  workable:{title:"THE HARDER SHOT", text:"The angle isn't perfect, but it's workable — and after everything it took to get here, you make the call to take it, carefully. Not every good hunt ends with an easy shot.", ethics:1},
+  poor:{title:"HELD OFF", text:"The position never comes together enough for a shot you'd feel good about. You let him walk. No kill today — but knowing when to hold is its own kind of successful hunt.", ethics:2}
+};
+function energySuffix(energy){
+  if(energy==='taxed') return " Your hands aren't perfectly steady after the morning you've put in, but the shot holds.";
+  if(energy==='spent') return " Every part of this comes harder than it should on an empty tank — but it comes together.";
+  return "";
+}
+
+/* ---------- scene presets ---------- */
+const scenePresets = {
+  intro: { sky:'linear-gradient(180deg,#161f2a 0%,#25303a 45%,#3a4438 75%,#28321f 100%)', sun:{show:false}, elk:'none' },
+  predawn: { sky:'linear-gradient(180deg,#131c28 0%,#20303a 40%,#2f3a30 75%,#212a17 100%)', sun:{show:false}, elk:'none' },
+  dawn: { sky:'linear-gradient(180deg,#2a2f3c 0%,#5a5c52 40%,#c98a4b 55%,#7c8f4a 80%,#374327 100%)', sun:{show:true, top:'34%', left:'70%', size:70, color:'#f2c98a'}, elk:'none' },
+  encounter: { sky:'linear-gradient(180deg,#3d4b52 0%,#a9835a 35%,#e3aa6e 55%,#6b7f4f 80%,#2e3a20 100%)', sun:{show:true, top:'22%', left:'25%', size:90, color:'#ffdca0'}, elk:'aware' },
+  debrief: { sky:'linear-gradient(180deg,#1a2420 0%,#2b352a 50%,#1e2818 100%)', sun:{show:false}, elk:'none' }
+};
+function applyScene(name){
+  const p = scenePresets[name] || scenePresets.intro;
+  document.getElementById('sky').style.background = p.sky;
+  const sun = document.getElementById('sun');
+  if(p.sun.show){ sun.style.opacity=1; sun.style.top=p.sun.top; sun.style.left=p.sun.left; sun.style.width=p.sun.size+'px'; sun.style.height=p.sun.size+'px'; sun.style.background=p.sun.color; sun.style.boxShadow=`0 0 80px 20px ${p.sun.color}55`; }
+  else { sun.style.opacity=0; }
+  const elk = document.getElementById('elk');
+  elk.classList.toggle('show', p.elk==='aware');
+  updateBadges();
+}
+function updateBadges(){
+  const w = {favorable:'FAVORABLE', compromised:'SHIFTING', blown:'BLOWN'}[S.wind];
+  const a = {unaware:'UNAWARE', alerted:'ALERTED', spooked:'GONE'}[S.awareness];
+  const p = {poor:'POOR', workable:'WORKABLE', strong:'STRONG'}[S.position];
+  const e = {spent:'SPENT', taxed:'TAXED', fresh:'FRESH'}[S.energy];
+  document.getElementById('windText').textContent = 'WIND: '+w;
+  document.getElementById('awareText').textContent = a;
+  document.getElementById('posText').textContent = p;
+  document.getElementById('enText').textContent = e;
+  document.getElementById('windArrow').style.transform = `rotate(${S.wind==='favorable'?0:(S.wind==='compromised'?35:70)}deg)`;
+}
+
+/* ---------- render / navigation ---------- */
+let view = { phase:'intro' };
+
+function render(){
+  const app = document.getElementById('app');
+
+  if(view.phase==='intro'){ applyScene('intro'); app.innerHTML = renderIntro(); attachIntro(); return; }
+
+  if(view.phase==='d1choice'){ applyScene(D1.scene); app.innerHTML = trail(1,'current')+cardChoice(D1); attachOpts(D1.options, (o)=>{ const r=resolveD1(o); view={phase:'d1outcome', result:r}; render(); }); return; }
+  if(view.phase==='d1outcome'){ applyScene(D1.scene); app.innerHTML = trail(1,'done')+cardOutcome(D1.label, view.result, 'Continue'); attach('advance', ()=>{ view={phase:'d2choice'}; render(); }); return; }
+
+  if(view.phase==='d2choice'){ const d2=D2(); applyScene(d2.scene); app.innerHTML = trail(2,'current')+cardChoice(d2); attachOpts(d2.options, (o)=>{ const r = resolveD2(o); view={phase:'d2outcome', result:r}; render(); }); return; }
+  if(view.phase==='d2outcome'){
+    const r = view.result;
+    if(r.hardStop){ applyScene(r.hardStop.scene); app.innerHTML = trail(2,'done')+cardBust(r.hardStop, r); attach('advance', ()=>{ view={phase:'debrief', bust:r.hardStop}; render(); }); return; }
+    applyScene('dawn');
+    app.innerHTML = trail(2,'done')+cardOutcome("DECISION 2 OF 3 — ON SIGN", r, 'Continue');
+    attach('advance', ()=>{ const next = afterD2(); view = next==='recovery' ? {phase:'recoverychoice'} : {phase:'d3choice'}; render(); });
+    return;
+  }
+
+  if(view.phase==='recoverychoice'){ applyScene('dawn'); app.innerHTML = trailRecovery()+cardChoice(RECOVERY); attachOpts(RECOVERY.options, (o)=>{ const r = resolveRecovery(o); if(r.ending==='fold'){ view={phase:'debrief', fold:true, foldText:r.foldText}; } else { view={phase:'d3choice'}; } render(); }); return; }
+
+  if(view.phase==='d3choice'){ const d3=D3(); applyScene(d3.scene); app.innerHTML = trail(3,'current')+cardChoice(d3); attachOpts(d3.options, (o)=>{ const r = resolveD3(o); view={phase:'d3outcome', result:r}; render(); }); return; }
+  if(view.phase==='d3outcome'){
+    const r = view.result;
+    if(r.hardStop){ applyScene(r.hardStop.scene); app.innerHTML = trail(3,'done')+cardBust(r.hardStop, r); attach('advance', ()=>{ view={phase:'debrief', bust:r.hardStop}; render(); }); return; }
+    applyScene('encounter');
+    app.innerHTML = trail(3,'done')+cardOutcome("DECISION 3 OF 3 — THE ENCOUNTER", r, 'See Debrief');
+    attach('advance', ()=>{ view={phase:'debrief', shot:SHOT_ENDINGS[S.position], finalEnergy:S.energy}; render(); });
+    return;
+  }
+
+  if(view.phase==='debrief'){ applyScene('debrief'); app.innerHTML = renderDebrief(view); attach('restart', ()=>{ S=initState(); S.ctx={...ctxSel}; view={phase:'intro'}; render(); }); return; }
+}
+
+function attach(id, fn){ document.getElementById(id).onclick = fn; }
+function attachOpts(options, fn){ document.querySelectorAll('.opt').forEach(btn=>{ btn.onclick = ()=> fn(options[btn.dataset.i]); }); }
+
+function renderIntro(){
+  return `
+    <p class="eyebrow">Scenario Trainer — v4 (Energy & Trip Context)</p>
+    <h1>FIRST LIGHT</h1>
+    <p class="sub">Timbered Draw · Early Archery · Public Land</p>
+    <div class="card">
+      <div class="field-label"><span>SCENE BRIEFING</span><span>ELK · ARCHERY</span></div>
+      <p class="narrative">Early September. 45 minutes before shooting light. You glassed a bull cross a saddle at last light yesterday, heading into a dark timber draw below you. Wind is calm right now, but forecast to swing uphill as the sun hits the slope. Camp is a mile out.</p>
+      <div class="ctx-group">
+        <div class="ctx-label">Trip Length</div>
+        <div class="ctx-pills">
+          <div class="pill ${ctxSel.time==='weekend'?'on':''}" data-set="time" data-val="weekend">Weekend</div>
+          <div class="pill ${ctxSel.time==='week'?'on':''}" data-set="time" data-val="week">Full Week</div>
+        </div>
+      </div>
+      <div class="ctx-group">
+        <div class="ctx-label">Ground</div>
+        <div class="ctx-pills">
+          <div class="pill ${ctxSel.land==='public'?'on':''}" data-set="land" data-val="public">Public / Pressured</div>
+          <div class="pill ${ctxSel.land==='private'?'on':''}" data-set="land" data-val="private">Private / Low-Pressure</div>
+        </div>
+      </div>
+      <button class="next-btn" id="begin">Begin Scenario</button>
+    </div>
+  `;
+}
+function attachIntro(){
+  document.querySelectorAll('.pill').forEach(p=>{
+    p.onclick = ()=>{ ctxSel[p.dataset.set] = p.dataset.val; render(); };
+  });
+  document.getElementById('begin').onclick = ()=>{ S=initState(); S.ctx={...ctxSel}; view={phase:'d1choice'}; render(); };
+}
+
+function trail(current, state){
+  let html = '<div class="trail">';
+  for(let i=1;i<=3;i++){
+    const cls = i<current ? 'done' : (i===current ? state : '');
+    html += `<div class="wp ${cls}">${i}</div>`;
+    if(i<3) html += `<div class="seg ${i<current?'done':''}"><div class="fill"></div></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+function trailRecovery(){
+  return `<div class="trail"><div class="wp done">1</div><div class="seg done"><div class="fill"></div></div><div class="wp current">R</div><div class="seg"><div class="fill"></div></div><div class="wp skip">3</div></div>`;
+}
+
+function cardChoice(node){
+  return `<div class="card">
+    <div class="field-label"><span>${node.label}</span><span>FIRST LIGHT</span></div>
+    <p class="narrative">${node.narrative}</p>
+    <div class="opts">${node.options.map((o,i)=>`<button class="opt" data-i="${i}"><span class="tag">${o.tag}</span>${o.text}</button>`).join('')}</div>
+  </div>`;
+}
+
+function energyLine(before, after){
+  if(before===after) return `<div class="energy-note">Energy holds steady — ${after.toUpperCase()}</div>`;
+  const dir = EN_LADDER.indexOf(after) > EN_LADDER.indexOf(before) ? '→ recovers to' : '→ drops to';
+  return `<div class="energy-note">Energy: ${before.toUpperCase()} ${dir} ${after.toUpperCase()}</div>`;
+}
+
+function cardOutcome(label, result, btnLabel){
+  const rub = result.rubric;
+  return `<div class="card">
+    <div class="field-label"><span>${label}</span><span>FIRST LIGHT</span></div>
+    <div class="outcome">
+      <p class="outcome-text">${result.outcome}</p>
+      ${energyLine(result.enBefore, result.enAfter)}
+      ${rub ? `<div class="rubric"><div class="rt">Field Notes — ${rub.label}</div><p><span class="score ${rub.tone}">${({strong:'STRONG',mixed:'MIXED',risky:'RISKY'})[rub.tone]}</span>${rub.text}</p></div>` : ''}
+      <button class="next-btn" id="advance">${btnLabel}</button>
+    </div>
+  </div>`;
+}
+
+function cardBust(hs, result){
+  return `<div class="card bust">
+    <div class="field-label"><span>HUNT ENDED</span><span>FIRST LIGHT</span></div>
+    <div class="outcome">
+      <h1 style="font-size:24px;">${hs.title}</h1>
+      <p class="outcome-text">${hs.text}</p>
+      ${energyLine(result.enBefore, result.enAfter)}
+      <div class="rubric"><div class="rt">What Happened</div><p>${hs.lesson}</p></div>
+      <button class="next-btn bust" id="advance">See Debrief</button>
+    </div>
+  </div>`;
+}
+
+function ctxLabel(ctx){
+  return (ctx.time==='weekend'?'Weekend':'Full Week') + ' · ' + (ctx.land==='public'?'Public / Pressured':'Private / Low-Pressure');
+}
+
+function renderDebrief(v){
+  const attrs = [ {k:'patience', label:'Patience'}, {k:'wind', label:'Wind & Thermal Reading'}, {k:'terrain', label:'Terrain Judgment'}, {k:'ethics', label:'Shot Discipline'}, {k:'energyMgmt', label:'Energy Management', special:true} ];
+  const max=6, min=-3;
+  let headline, body;
+  if(v.bust){ headline = v.bust.title; body = `<p style="font-size:15px;line-height:1.6;color:var(--sage);">${v.bust.lesson}</p>`; }
+  else if(v.fold){ headline = "LIVED TO HUNT THIS LINE AGAIN"; body = `<p style="font-size:15px;line-height:1.6;color:var(--sage);">${v.foldText}</p>`; }
+  else { headline = v.shot.title; body = `<p class="outcome-text" style="margin-bottom:14px;">${v.shot.text}${energySuffix(v.finalEnergy)}</p>`; applyScores({ethics:v.shot.ethics}); }
+
+  return `
+    <p class="eyebrow">Debrief — First Light</p>
+    <h1 class="debrief-title">${headline}</h1>
+    <p class="sub">${ctxLabel(S.ctx)} · Scored against experienced-hunter judgment across your path.</p>
+    <div class="card">
+      ${body}
+      ${attrs.map(a=>{ const val=S.scores[a.k]; const pct=Math.max(0,Math.min(100,((val-min)/(max-min))*100)); return `<div class="attr"><div class="attr-head"><span>${a.label}</span><span>${val>0?'+':''}${val}</span></div><div class="bar"><div class="fill ${a.special?'energy':''}" style="width:${pct}%"></div></div></div>`; }).join('')}
+      <div class="pathnote">Prototype note: rubric scoring and context weighting are illustrative, not yet validated by experienced hunters. Same choices score differently depending on the trip context you picked at the start.</div>
+    </div>
+    <button class="restart" id="restart">↺ Run Scenario Again</button>
+  `;
+}
+
+render();
+</script>
+</body>
+</html>
