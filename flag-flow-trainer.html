@@ -36,6 +36,12 @@
   }
 
   .wrap{ max-width:960px; margin:0 auto; }
+  @media (min-width: 768px){
+    .wrap{ max-width:1180px; }
+  }
+  @media (min-width: 1100px){
+    .wrap{ max-width:1360px; }
+  }
 
   header{ margin-bottom:18px; }
   h1{
@@ -242,6 +248,105 @@
   .mode-btn:hover{ color:var(--chalk); }
   .mode-btn.active{ background:var(--flag-gold); color:#2a1d05; }
 
+  .tap-controls{
+    display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    margin-bottom:14px;
+  }
+  .formation-btn, .subtoggle-btn{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    color:var(--chalk-dim);
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:600;
+    font-size:0.82rem;
+    padding:10px 16px;
+    border-radius:20px;
+    cursor:pointer;
+    transition:all .15s ease;
+  }
+  .formation-btn:hover, .subtoggle-btn:hover{ border-color:var(--flag-gold); color:var(--chalk); }
+  .formation-btn.active, .subtoggle-btn.active{ background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); }
+  .tap-hint{
+    font-family:'Bradley Hand','Segoe Print','Chalkboard SE','Comic Sans MS',cursive;
+    font-size:0.9rem;
+    color:var(--chalk-dim);
+  }
+
+  /* tappable player affordance, applied to the SVG <g> wrapping a player */
+  .tappable{ cursor:pointer; }
+  .tappable circle{ transition: stroke-width .12s ease, filter .12s ease; }
+  .tappable:hover circle, .tappable:active circle{ filter: drop-shadow(0 0 4px var(--flag-gold)); }
+
+  .assign-sheet-backdrop{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.5);
+    z-index:1000;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .assign-sheet{
+    width:100%; max-width:480px;
+    background:var(--board-dark);
+    border:1px solid var(--panel-line);
+    border-radius:16px 16px 0 0;
+    padding:16px;
+    max-height:70vh;
+    overflow-y:auto;
+    box-shadow: 0 -10px 30px rgba(0,0,0,0.5);
+  }
+  .assign-sheet h3{
+    font-family:'Bradley Hand','Segoe Print','Chalkboard SE','Comic Sans MS',cursive;
+    color:var(--flag-gold);
+    margin:0 0 4px 0;
+    font-size:1.2rem;
+  }
+  .assign-sheet .assign-current{
+    color:var(--chalk-dim);
+    font-size:0.82rem;
+    margin:0 0 14px 0;
+  }
+  .assign-group-label{
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:700;
+    font-size:0.72rem;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--chalk-dim);
+    margin:14px 0 8px 0;
+  }
+  .assign-group-label:first-of-type{ margin-top:0; }
+  .assign-options{
+    display:grid;
+    grid-template-columns:repeat(2, 1fr);
+    gap:8px;
+  }
+  .assign-option-btn{
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    color:var(--chalk);
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:600;
+    font-size:0.85rem;
+    padding:12px 10px;
+    border-radius:10px;
+    cursor:pointer;
+    text-align:center;
+  }
+  .assign-option-btn:hover{ border-color:var(--flag-gold); }
+  .assign-option-btn.current{ background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); }
+  .assign-sheet-close{
+    display:block;
+    width:100%;
+    margin-top:16px;
+    background:transparent;
+    border:1px solid var(--panel-line);
+    color:var(--chalk-dim);
+    padding:10px;
+    border-radius:10px;
+    font-family:'Inter',-apple-system,sans-serif;
+    font-weight:600;
+    cursor:pointer;
+  }
+
   details.collapsible{
     margin-bottom:10px;
     border:1px solid var(--panel-line);
@@ -300,16 +405,22 @@
     <button class="mode-btn active" id="modeOffenseBtn">Offense</button>
     <button class="mode-btn" id="modeDefenseBtn">Defense</button>
   </div>
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="interactionClassicBtn">Classic</button>
+    <button class="mode-btn" id="interactionTapBtn">Tap to Assign</button>
+  </div>
+
+  <div class="tap-controls" id="tapControls" style="display:none;"></div>
 
   <div id="offenseControls">
-    <div class="tabs-row">
+    <div class="tabs-row" id="offenseTabsRow">
       <div class="tab-group">
         <span class="tab-label">OFFENSE</span>
         <div id="playTabs"></div>
       </div>
     </div>
 
-    <details class="collapsible" open>
+    <details class="collapsible" id="lineupDetails" open>
       <summary>Lineup</summary>
       <div class="lineup-panel" id="lineupPanel"></div>
     </details>
@@ -326,17 +437,18 @@
   </div>
 
   <div id="defenseControls" style="display:none;">
-    <div class="tabs-row">
+    <div class="tabs-row" id="defenseTabsRow">
       <div class="tab-group">
         <span class="tab-label">DEFENSE</span>
         <div id="defenseTabs"></div>
       </div>
     </div>
 
-    <details class="collapsible" open>
+    <details class="collapsible" id="defenseLineupDetails" open>
       <summary>Lineup</summary>
       <div class="lineup-panel" id="defenseLineupPanel"></div>
     </details>
+
 
     <details class="collapsible" id="defenseBuilderDetails" style="display:none;" open>
       <summary>Defense Builder</summary>
@@ -374,6 +486,8 @@
 
   <footer>Prototype teaching tool — canned plays &amp; coverages, built to expand later.</footer>
 </div>
+
+<div id="assignSheetRoot"></div>
 
 <script>
 (function(){
@@ -1842,6 +1956,8 @@
     playerLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
     const def = DEFENSES[currentDefense];
+    const offenseTappable = interactionMode === 'tap' && (currentPlay === 'customPass' || currentPlay === 'customRun');
+    const defenseTappable = interactionMode === 'tap' && currentDefense === 'customDefense';
 
     Object.keys(play.routes).forEach(key=>{
       const pos = getPosAtT(play.routes[key], t);
@@ -1854,6 +1970,10 @@
         'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
       txt.textContent = label;
       g.appendChild(txt);
+      if (offenseTappable){
+        g.classList.add('tappable');
+        g.onclick = ()=> openAssignSheet(key, 'offense');
+      }
       playerLayer.appendChild(g);
     });
 
@@ -1868,6 +1988,10 @@
         'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
       txt.textContent = label;
       g.appendChild(txt);
+      if (defenseTappable){
+        g.classList.add('tappable');
+        g.onclick = ()=> openAssignSheet(key, 'defense');
+      }
       playerLayer.appendChild(g);
     });
   }
@@ -2041,14 +2165,267 @@
   // set of tabs/builder panels are visible, so mobile isn't showing both
   // control sets — and every future control (defense builder, etc.) has
   // a natural home to slot into.
+  let currentMode = 'offense';
   function setMode(mode){
+    currentMode = mode;
     document.getElementById('offenseControls').style.display = mode === 'offense' ? 'block' : 'none';
     document.getElementById('defenseControls').style.display = mode === 'defense' ? 'block' : 'none';
     document.getElementById('modeOffenseBtn').classList.toggle('active', mode === 'offense');
     document.getElementById('modeDefenseBtn').classList.toggle('active', mode === 'defense');
+    buildTapControls();
   }
   document.getElementById('modeOffenseBtn').onclick = ()=> setMode('offense');
   document.getElementById('modeDefenseBtn').onclick = ()=> setMode('defense');
+
+  // ---------- interaction mode: Classic (dropdowns) vs Tap to Assign ----------
+  // Both modes edit the exact same customPass/customRun/customDefense
+  // state through the exact same regenerate functions — this is a true
+  // A/B of the *interaction*, not two separate builders to keep in sync.
+  let interactionMode = 'classic';  // 'classic' | 'tap'
+  let tapSubMode = 'pass';          // 'pass' | 'run' — offense only
+
+  function setInteractionMode(mode){
+    interactionMode = mode;
+    document.getElementById('interactionClassicBtn').classList.toggle('active', mode === 'classic');
+    document.getElementById('interactionTapBtn').classList.toggle('active', mode === 'tap');
+    document.getElementById('tapControls').style.display = mode === 'tap' ? 'flex' : 'none';
+    document.getElementById('offenseTabsRow').style.display = mode === 'tap' ? 'none' : 'flex';
+    document.getElementById('defenseTabsRow').style.display = mode === 'tap' ? 'none' : 'flex';
+
+    const builderDetails = document.getElementById('builderDetails');
+    const runBuilderDetails = document.getElementById('runBuilderDetails');
+    const defenseBuilderDetails = document.getElementById('defenseBuilderDetails');
+    const lineupDetails = document.getElementById('lineupDetails');
+    const defenseLineupDetails = document.getElementById('defenseLineupDetails');
+
+    if (mode === 'tap'){
+      // Force the live play/defense to whichever custom one this tap
+      // session is building, so there's always something tappable.
+      setPlay(tapSubMode === 'pass' ? 'customPass' : 'customRun');
+      setDefense('customDefense');
+      builderDetails.style.display = 'none';
+      runBuilderDetails.style.display = 'none';
+      defenseBuilderDetails.style.display = 'none';
+      lineupDetails.style.display = 'none';
+      defenseLineupDetails.style.display = 'none';
+    } else {
+      builderDetails.style.display = currentPlay === 'customPass' ? 'block' : 'none';
+      runBuilderDetails.style.display = currentPlay === 'customRun' ? 'block' : 'none';
+      defenseBuilderDetails.style.display = currentDefense === 'customDefense' ? 'block' : 'none';
+      lineupDetails.style.display = 'block';
+      defenseLineupDetails.style.display = 'block';
+    }
+    buildTapControls();
+    drawRoutePreviews();
+    render();
+  }
+  document.getElementById('interactionClassicBtn').onclick = ()=> setInteractionMode('classic');
+  document.getElementById('interactionTapBtn').onclick = ()=> setInteractionMode('tap');
+
+  function buildTapControls(){
+    const panel = document.getElementById('tapControls');
+    panel.innerHTML = '';
+    if (interactionMode !== 'tap') return;
+
+    if (currentMode === 'offense'){
+      const subWrap = document.createElement('div');
+      subWrap.style.display = 'flex'; subWrap.style.gap = '6px';
+      [['pass','Pass'],['run','Run']].forEach(([sub,label])=>{
+        const b = document.createElement('button');
+        b.className = 'subtoggle-btn' + (tapSubMode===sub ? ' active' : '');
+        b.textContent = label;
+        b.onclick = ()=>{
+          tapSubMode = sub;
+          setPlay(sub === 'pass' ? 'customPass' : 'customRun');
+          buildTapControls();
+          drawRoutePreviews();
+          render();
+        };
+        subWrap.appendChild(b);
+      });
+      panel.appendChild(subWrap);
+
+      const activeCustom = tapSubMode === 'pass' ? customPass : customRun;
+      const formWrap = document.createElement('div');
+      formWrap.style.display = 'flex'; formWrap.style.gap = '6px';
+      Object.keys(FORMATIONS).forEach(fKey=>{
+        const b = document.createElement('button');
+        b.className = 'formation-btn' + (activeCustom.formation===fKey ? ' active' : '');
+        b.textContent = FORMATIONS[fKey].name;
+        b.onclick = ()=>{
+          activeCustom.formation = fKey;
+          if (tapSubMode === 'pass'){ customPass.routes = {}; customPass.target = null; regenerateCustomPass(); buildBuilderPanel(); }
+          else { customRun.paths = {}; customRun.goesTo = null; regenerateCustomRun(); buildRunBuilderPanel(); }
+          drawRoutePreviews();
+          buildTapControls();
+          render();
+        };
+        formWrap.appendChild(b);
+      });
+      panel.appendChild(formWrap);
+
+      const hint = document.createElement('div');
+      hint.className = 'tap-hint';
+      hint.textContent = 'Tap a player on the field to assign their ' + (tapSubMode === 'pass' ? 'route.' : 'action.');
+      panel.appendChild(hint);
+    } else {
+      const hint = document.createElement('div');
+      hint.className = 'tap-hint';
+      hint.textContent = 'Tap a defender on the field to assign their action.';
+      panel.appendChild(hint);
+    }
+  }
+
+  // ---------- assign sheet (the tap-to-assign popup) ----------
+  function closeAssignSheet(){
+    document.getElementById('assignSheetRoot').innerHTML = '';
+  }
+
+  // Roster row — same idea as the Lineup panel, just inline in the sheet.
+  function renderSheetRoster(sheet, slot, assignmentsObj, onChange){
+    const lbl = document.createElement('div');
+    lbl.className = 'assign-group-label';
+    lbl.textContent = 'Player';
+    sheet.appendChild(lbl);
+    const grid = document.createElement('div');
+    grid.className = 'assign-options';
+    const blank = document.createElement('button');
+    blank.className = 'assign-option-btn' + (!assignmentsObj[slot] ? ' current' : '');
+    blank.textContent = '—';
+    blank.onclick = ()=>{ delete assignmentsObj[slot]; onChange(); rerenderSheetBody(); };
+    grid.appendChild(blank);
+    ROSTER.forEach(name=>{
+      const b = document.createElement('button');
+      b.className = 'assign-option-btn' + (assignmentsObj[slot] === name ? ' current' : '');
+      b.textContent = name;
+      b.onclick = ()=>{ assignmentsObj[slot] = name; onChange(); rerenderSheetBody(); };
+      grid.appendChild(b);
+    });
+    sheet.appendChild(grid);
+  }
+
+  function renderSheetOptionGroups(sheet, currentLabel, groups, currentVal, onAssign){
+    const cur = document.createElement('p'); cur.className = 'assign-current';
+    cur.textContent = 'Currently: ' + currentLabel;
+    sheet.appendChild(cur);
+    groups.forEach(group=>{
+      if (group.label){
+        const lbl = document.createElement('div');
+        lbl.className = 'assign-group-label';
+        lbl.textContent = group.label;
+        sheet.appendChild(lbl);
+      }
+      const grid = document.createElement('div');
+      grid.className = 'assign-options';
+      group.options.forEach(opt=>{
+        const b = document.createElement('button');
+        b.className = 'assign-option-btn' + (opt.value === currentVal ? ' current' : '');
+        b.textContent = opt.label;
+        b.onclick = ()=>{ onAssign(opt.value); rerenderSheetBody(); };
+        grid.appendChild(b);
+      });
+      sheet.appendChild(grid);
+    });
+  }
+
+  // "Gets the ball" toggle — explicit, not inferred from whatever was
+  // assigned last. isCurrent()/setCurrent() let this work for both the
+  // Pass target and the Run ball carrier with the same UI.
+  function renderSheetBallToggle(sheet, isCurrent, setCurrent){
+    const lbl = document.createElement('div');
+    lbl.className = 'assign-group-label';
+    lbl.textContent = 'Ball';
+    sheet.appendChild(lbl);
+    const b = document.createElement('button');
+    b.className = 'assign-option-btn' + (isCurrent() ? ' current' : '');
+    b.style.width = '100%';
+    b.textContent = isCurrent() ? '🏈 Gets the ball' : 'Gets the ball?';
+    b.onclick = ()=>{ setCurrent(); rerenderSheetBody(); };
+    sheet.appendChild(b);
+  }
+
+  // Re-draws just the sheet's contents (not the backdrop) so repeated
+  // taps inside one sheet visit don't require re-opening it.
+  let currentSheetRender = null;
+  function rerenderSheetBody(){
+    regenerateActivePlay();
+    drawRoutePreviews();
+    render();
+    if (currentSheetRender) currentSheetRender();
+  }
+  function regenerateActivePlay(){
+    if (currentDefense === 'customDefense'){ regenerateCustomDefense(); buildDefenseBuilderPanel(); }
+    if (currentPlay === 'customPass'){ regenerateCustomPass(); buildBuilderPanel(); }
+    if (currentPlay === 'customRun'){ regenerateCustomRun(); buildRunBuilderPanel(); }
+  }
+
+  function openAssignSheet(slot, side){
+    const root = document.getElementById('assignSheetRoot');
+    const backdrop = document.createElement('div');
+    backdrop.className = 'assign-sheet-backdrop';
+    backdrop.onclick = (e)=>{ if (e.target === backdrop) closeAssignSheet(); };
+    const sheet = document.createElement('div');
+    sheet.className = 'assign-sheet';
+    backdrop.appendChild(sheet);
+
+    function paint(){
+      sheet.innerHTML = '';
+      const h = document.createElement('h3');
+      h.textContent = (side === 'defense' ? (DEF_ROLE_NAMES[slot]||slot) : (ROLE_NAMES[slot]||slot));
+      sheet.appendChild(h);
+
+      if (side === 'defense'){
+        renderSheetRoster(sheet, slot, DEF_ASSIGNMENTS, ()=>{});
+        const currentVal = customDefense.paths[slot] || 'stay';
+        renderSheetOptionGroups(sheet, DEF_PATHS[currentVal].label,
+          [{label:'Action:', options: DEF_PATH_ORDER.map(k=>({value:k,label:DEF_PATHS[k].label}))}],
+          currentVal,
+          (val)=>{ customDefense.paths[slot] = val; });
+      } else if (currentPlay === 'customRun'){
+        renderSheetRoster(sheet, slot, ASSIGNMENTS, ()=>{});
+        if (slot === 'QB'){
+          const currentVal = customRun.qbAction;
+          renderSheetOptionGroups(sheet, QB_ACTION_LABELS[currentVal],
+            [{label:'QB Action:', options: Object.keys(QB_ACTION_LABELS).map(k=>({value:k,label:QB_ACTION_LABELS[k]}))}],
+            currentVal,
+            (val)=>{ customRun.qbAction = val; });
+        } else {
+          const currentVal = customRun.paths[slot] || 'stay';
+          renderSheetOptionGroups(sheet, pathDefFor(currentVal).label,
+            [{label:'Run:', options: RUN_PATH_ORDER.map(k=>({value:k,label:RUN_PATHS[k].label}))},
+             {label:'Pass:', options: ROUTE_ORDER.map(k=>({value:k,label:ROUTES[k].label}))}],
+            currentVal,
+            (val)=>{ customRun.paths[slot] = val; });
+          renderSheetBallToggle(sheet, ()=> customRun.goesTo === slot, ()=>{ customRun.goesTo = slot; });
+        }
+      } else {
+        // customPass
+        renderSheetRoster(sheet, slot, ASSIGNMENTS, ()=>{});
+        if (slot === 'QB'){
+          const p = document.createElement('p'); p.className = 'assign-current';
+          p.textContent = 'Drops back and reads the field — nothing to assign here.';
+          sheet.appendChild(p);
+        } else {
+          const currentVal = customPass.routes[slot] || 'stay';
+          renderSheetOptionGroups(sheet, ROUTES[currentVal].label,
+            [{label:'Route:', options: ROUTE_ORDER.map(k=>({value:k,label:ROUTES[k].label}))}],
+            currentVal,
+            (val)=>{ customPass.routes[slot] = val; });
+          renderSheetBallToggle(sheet, ()=> customPass.target === slot, ()=>{ customPass.target = slot; });
+        }
+      }
+
+      const doneBtn = document.createElement('button');
+      doneBtn.className = 'assign-sheet-close'; doneBtn.textContent = 'Done';
+      doneBtn.onclick = closeAssignSheet;
+      sheet.appendChild(doneBtn);
+    }
+
+    currentSheetRender = paint;
+    paint();
+    root.innerHTML = '';
+    root.appendChild(backdrop);
+  }
 
   // ---------- init ----------
   drawField();
