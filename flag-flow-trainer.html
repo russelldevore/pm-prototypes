@@ -35,7 +35,7 @@
     min-height:100vh;
   }
 
-  .wrap{ max-width:960px; margin:0 auto; }
+  .wrap{ max-width:960px; margin:0 auto; padding-bottom:90px; }
   @media (min-width: 768px){
     .wrap{ max-width:1180px; }
   }
@@ -124,13 +124,50 @@
     height:fit-content;
   }
 
-  .controls{
+  .floating-controls{
+    position:fixed;
+    left:50%;
+    bottom:14px;
+    transform:translateX(-50%);
+    z-index:500;
     display:flex;
     align-items:center;
-    gap:10px;
-    margin-top:14px;
-    flex-wrap:wrap;
+    gap:8px;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:26px;
+    padding:8px 12px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.45);
+    max-width:calc(100vw - 24px);
+    overflow-x:auto;
   }
+  .floating-controls.minimized{
+    padding:6px;
+    border-radius:50%;
+    gap:0;
+  }
+  .floating-controls.minimized .extra-control{ display:none; }
+  .fc-toggle{
+    background:transparent;
+    border:none;
+    color:var(--chalk-dim);
+    cursor:pointer;
+    font-size:0.85rem;
+    padding:4px 6px;
+    flex-shrink:0;
+  }
+  .fc-toggle:hover{ color:var(--chalk); }
+  .fc-handle{
+    cursor:grab;
+    color:var(--chalk-dim);
+    font-size:1rem;
+    padding:4px 6px;
+    touch-action:none;
+    user-select:none;
+    -webkit-user-select:none;
+    flex-shrink:0;
+  }
+  .fc-handle:active{ cursor:grabbing; }
   .btn{
     background:var(--panel);
     border:1px solid var(--panel-line);
@@ -151,8 +188,8 @@
     font-size:1.1rem;
   }
   .scrub{
-    flex:1;
-    min-width:140px;
+    width:110px;
+    flex:0 0 auto;
     accent-color: var(--flag-gold);
   }
   .speed-select{
@@ -466,17 +503,19 @@
     <svg id="field" viewBox="0 30 800 423" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
-  <div class="controls">
-    <button class="btn" id="resetBtn" title="Reset">⟲</button>
-    <button class="btn" id="stepBackBtn" title="Step back">◁</button>
+  <div class="floating-controls" id="floatingControls">
+    <span class="fc-handle" id="fcHandle" title="Drag to move">⠿</span>
+    <button class="btn extra-control" id="resetBtn" title="Reset">⟲</button>
+    <button class="btn extra-control" id="stepBackBtn" title="Step back">◁</button>
     <button class="btn primary" id="playBtn" title="Play/Pause">▶</button>
-    <button class="btn" id="stepFwdBtn" title="Step forward">▷</button>
-    <input type="range" class="scrub" id="scrub" min="0" max="1000" value="0">
-    <select class="speed-select" id="speedSelect">
+    <button class="btn extra-control" id="stepFwdBtn" title="Step forward">▷</button>
+    <input type="range" class="scrub extra-control" id="scrub" min="0" max="1000" value="0">
+    <select class="speed-select extra-control" id="speedSelect">
       <option value="0.1">Slow</option>
       <option value="0.18" selected>Normal</option>
       <option value="0.3">Fast</option>
     </select>
+    <button class="fc-toggle" id="fcToggle" title="Minimize">⌄</button>
   </div>
 
   <details class="collapsible" id="playDescDetails" open>
@@ -2169,6 +2208,72 @@
   document.getElementById('speedSelect').onchange = (e)=>{
     speed = Number(e.target.value);
   };
+
+  // ---------- floating controls minimize/expand ----------
+  let controlsMinimized = false;
+  function setControlsMinimized(min){
+    controlsMinimized = min;
+    document.getElementById('floatingControls').classList.toggle('minimized', min);
+    document.getElementById('fcToggle').textContent = min ? '⌃' : '⌄';
+    document.getElementById('fcToggle').title = min ? 'Expand' : 'Minimize';
+  }
+  document.getElementById('fcToggle').onclick = ()=> setControlsMinimized(!controlsMinimized);
+
+  // ---------- floating controls: drag to reposition ----------
+  // Only the handle is draggable — dragging the whole bar risks a tap on
+  // Play accidentally registering as a drag (or vice versa). Position
+  // resets on reload by design, same as everything else in this app.
+  (function initDrag(){
+    const bar = document.getElementById('floatingControls');
+    const handle = document.getElementById('fcHandle');
+    let dragging = false;
+    let startX, startY, startLeft, startTop;
+
+    function clamp(val, min, max){ return Math.max(min, Math.min(max, val)); }
+
+    function onPointerDown(e){
+      dragging = true;
+      const rect = bar.getBoundingClientRect();
+      // Lock in explicit left/top matching the bar's current rendered
+      // position, dropping the CSS bottom/transform centering, so
+      // free-form dragging can take over with no visual jump.
+      bar.style.left = rect.left + 'px';
+      bar.style.top = rect.top + 'px';
+      bar.style.bottom = 'auto';
+      bar.style.transform = 'none';
+      startX = e.clientX; startY = e.clientY;
+      startLeft = rect.left; startTop = rect.top;
+      handle.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }
+    function onPointerMove(e){
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      const rect = bar.getBoundingClientRect();
+      const maxLeft = Math.max(0, window.innerWidth - rect.width);
+      const maxTop = Math.max(0, window.innerHeight - rect.height);
+      bar.style.left = clamp(startLeft + dx, 0, maxLeft) + 'px';
+      bar.style.top = clamp(startTop + dy, 0, maxTop) + 'px';
+    }
+    function onPointerUp(e){
+      dragging = false;
+      try{ handle.releasePointerCapture(e.pointerId); }catch(err){}
+    }
+    handle.addEventListener('pointerdown', onPointerDown);
+    handle.addEventListener('pointermove', onPointerMove);
+    handle.addEventListener('pointerup', onPointerUp);
+    handle.addEventListener('pointercancel', onPointerUp);
+
+    // Safety net: if a screen rotation would leave the bar off-screen,
+    // snap it back to the default bottom-center position instead of
+    // letting it become unreachable.
+    window.addEventListener('resize', ()=>{
+      const rect = bar.getBoundingClientRect();
+      if (rect.right > window.innerWidth || rect.bottom > window.innerHeight || rect.left < 0 || rect.top < 0){
+        bar.style.left = ''; bar.style.top = ''; bar.style.bottom = ''; bar.style.transform = '';
+      }
+    });
+  })();
 
   // ---------- offense/defense mode toggle ----------
   // Purely a UI-declutter toggle: both offense and defense still animate
