@@ -561,6 +561,57 @@
     return waypoints.map((w,i)=> i===0 ? `M ${w.x} ${w.y}` : `L ${w.x} ${w.y}`).join(' ');
   }
 
+  // ---------- usage tracking ----------
+  // Anonymous, device-based (not per-person) — a random ID generated once
+  // per browser/device and reused on return visits. No login, no name.
+  // Events queue in localStorage so nothing's lost when offline at
+  // practice; the queue flushes opportunistically once back online.
+  // Delivery uses no-cors, so success can't be confirmed client-side —
+  // a deliberate, acceptable tradeoff for a lightweight usage beacon,
+  // not a system that needs guaranteed delivery.
+  const TRACKING_URL = 'https://script.google.com/macros/s/AKfycbxH8960-usmRSUTvZXcmvi_amXyUTFjVdtVb2WTxLtl1Yx0H7DZcWiDroyojZV_NDcx/exec';
+  const TRACKING_QUEUE_KEY = 'flagflow_tracking_queue';
+  const DEVICE_ID_KEY = 'flagflow_device_id';
+
+  function getDeviceId(){
+    try{
+      let id = localStorage.getItem(DEVICE_ID_KEY);
+      if (!id){
+        id = 'dev-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+        localStorage.setItem(DEVICE_ID_KEY, id);
+      }
+      return id;
+    } catch(e){ return 'dev-unknown'; }
+  }
+  const DEVICE_ID = getDeviceId();
+
+  function getTrackingQueue(){
+    try{ return JSON.parse(localStorage.getItem(TRACKING_QUEUE_KEY) || '[]'); }
+    catch(e){ return []; }
+  }
+  function saveTrackingQueue(q){
+    try{ localStorage.setItem(TRACKING_QUEUE_KEY, JSON.stringify(q)); } catch(e){}
+  }
+
+  function logEvent(eventName, detail){
+    const item = { deviceId: DEVICE_ID, event: eventName, detail: detail || {} };
+    const q = getTrackingQueue();
+    q.push(item);
+    saveTrackingQueue(q);
+    flushTrackingQueue();
+  }
+
+  function flushTrackingQueue(){
+    if (!navigator.onLine) return;
+    const q = getTrackingQueue();
+    if (!q.length) return;
+    q.forEach(item=>{
+      fetch(TRACKING_URL, { method:'POST', mode:'no-cors', body: JSON.stringify(item) }).catch(()=>{});
+    });
+    saveTrackingQueue([]);
+  }
+  window.addEventListener('online', flushTrackingQueue);
+
   // ---------- yard scale ----------
   // LOS_X is the pixel x-position of the line of scrimmage; YARD_PX is
   // pixels per yard (used for both depth and width). Field runs 0–50
@@ -1641,6 +1692,7 @@
       customPass.formation = fSelect.value;
       customPass.routes = {};
       customPass.target = null;
+      logEvent('formation_select', {context:'customPass', formation:fSelect.value});
       regenerateCustomPass();
       drawRoutePreviews();
       buildBuilderPanel();
@@ -1664,6 +1716,7 @@
       });
       select.onchange = ()=>{
         customPass.routes[slot] = select.value;
+        logEvent('route_select', {context:'classic', slot, route:select.value, formation:customPass.formation});
         regenerateCustomPass();
         drawRoutePreviews();
         buildBuilderPanel();
@@ -1686,6 +1739,7 @@
     });
     tSelect.onchange = ()=>{
       customPass.target = tSelect.value;
+      logEvent('throw_target_select', {context:'classic', slot:tSelect.value});
       regenerateCustomPass();
       render();
     };
@@ -1824,7 +1878,7 @@
         if (val === currentValue) opt.selected = true;
         select.appendChild(opt);
       });
-      select.onchange = ()=> onChange(select.value);
+      select.onchange = ()=>{ logEvent('run_builder_select', {field:labelText, value:select.value}); onChange(select.value); };
       chip.appendChild(role); chip.appendChild(select);
       panel.appendChild(chip);
     }
@@ -1852,7 +1906,7 @@
       });
       select.appendChild(runGroup);
       select.appendChild(passGroup);
-      select.onchange = ()=> onChange(select.value);
+      select.onchange = ()=>{ logEvent('run_path_select', {context:'classic', slot:labelText, value:select.value}); onChange(select.value); };
       chip.appendChild(role); chip.appendChild(select);
       panel.appendChild(chip);
     }
@@ -1957,6 +2011,7 @@
       });
       select.onchange = ()=>{
         customDefense.paths[slot] = select.value;
+        logEvent('defense_action_select', {context:'classic', slot, action:select.value});
         regenerateCustomDefense();
         drawRoutePreviews();
         render();
@@ -2160,14 +2215,14 @@
     Object.keys(PLAYS).forEach(key=>{
       const b = document.createElement('button');
       b.className = 'tab'; b.textContent = PLAYS[key].name; b.dataset.key = key;
-      b.onclick = ()=> setPlay(key);
+      b.onclick = ()=>{ logEvent('play_tab_select', {play:key}); setPlay(key); };
       playTabs.appendChild(b);
     });
     const defTabs = document.getElementById('defenseTabs');
     Object.keys(DEFENSES).forEach(key=>{
       const b = document.createElement('button');
       b.className = 'tab'; b.textContent = DEFENSES[key].name; b.dataset.key = key;
-      b.onclick = ()=> setDefense(key);
+      b.onclick = ()=>{ logEvent('defense_tab_select', {defense:key}); setDefense(key); };
       defTabs.appendChild(b);
     });
   }
@@ -2290,8 +2345,8 @@
     document.getElementById('modeDefenseBtn').classList.toggle('active', mode === 'defense');
     buildTapControls();
   }
-  document.getElementById('modeOffenseBtn').onclick = ()=> setMode('offense');
-  document.getElementById('modeDefenseBtn').onclick = ()=> setMode('defense');
+  document.getElementById('modeOffenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'offense'}); setMode('offense'); };
+  document.getElementById('modeDefenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'defense'}); setMode('defense'); };
 
   // ---------- interaction mode: Classic (dropdowns) vs Tap to Assign ----------
   // Both modes edit the exact same customPass/customRun/customDefense
@@ -2335,8 +2390,8 @@
     drawRoutePreviews();
     render();
   }
-  document.getElementById('interactionClassicBtn').onclick = ()=> setInteractionMode('classic');
-  document.getElementById('interactionTapBtn').onclick = ()=> setInteractionMode('tap');
+  document.getElementById('interactionClassicBtn').onclick = ()=>{ logEvent('interaction_mode', {mode:'classic'}); setInteractionMode('classic'); };
+  document.getElementById('interactionTapBtn').onclick = ()=>{ logEvent('interaction_mode', {mode:'tap'}); setInteractionMode('tap'); };
 
   function buildTapControls(){
     const panel = document.getElementById('tapControls');
@@ -2352,6 +2407,7 @@
         b.textContent = label;
         b.onclick = ()=>{
           tapSubMode = sub;
+          logEvent('tap_submode_select', {mode:sub});
           setPlay(sub === 'pass' ? 'customPass' : 'customRun');
           buildTapControls();
           drawRoutePreviews();
@@ -2370,6 +2426,7 @@
         b.textContent = FORMATIONS[fKey].name;
         b.onclick = ()=>{
           activeCustom.formation = fKey;
+          logEvent('formation_select', {context:'tap', subMode:tapSubMode, formation:fKey});
           if (tapSubMode === 'pass'){ customPass.routes = {}; customPass.target = null; regenerateCustomPass(); buildBuilderPanel(); }
           else { customRun.paths = {}; customRun.goesTo = null; regenerateCustomRun(); buildRunBuilderPanel(); }
           drawRoutePreviews();
@@ -2496,7 +2553,7 @@
         renderSheetOptionGroups(sheet, DEF_PATHS[currentVal].label,
           [{label:'Action:', options: DEF_PATH_ORDER.map(k=>({value:k,label:DEF_PATHS[k].label}))}],
           currentVal,
-          (val)=>{ customDefense.paths[slot] = val; });
+          (val)=>{ customDefense.paths[slot] = val; logEvent('defense_action_select', {context:'tap', slot, action:val}); });
       } else if (currentPlay === 'customRun'){
         renderSheetRoster(sheet, slot, ASSIGNMENTS, ()=>{});
         if (slot === 'QB'){
@@ -2504,15 +2561,15 @@
           renderSheetOptionGroups(sheet, QB_ACTION_LABELS[currentVal],
             [{label:'QB Action:', options: Object.keys(QB_ACTION_LABELS).map(k=>({value:k,label:QB_ACTION_LABELS[k]}))}],
             currentVal,
-            (val)=>{ customRun.qbAction = val; });
+            (val)=>{ customRun.qbAction = val; logEvent('qb_action_select', {context:'tap', action:val}); });
         } else {
           const currentVal = customRun.paths[slot] || 'stay';
           renderSheetOptionGroups(sheet, pathDefFor(currentVal).label,
             [{label:'Run:', options: RUN_PATH_ORDER.map(k=>({value:k,label:RUN_PATHS[k].label}))},
              {label:'Pass:', options: ROUTE_ORDER.map(k=>({value:k,label:ROUTES[k].label}))}],
             currentVal,
-            (val)=>{ customRun.paths[slot] = val; });
-          renderSheetBallToggle(sheet, ()=> customRun.goesTo === slot, ()=>{ customRun.goesTo = slot; });
+            (val)=>{ customRun.paths[slot] = val; logEvent('run_path_select', {context:'tap', slot, value:val}); });
+          renderSheetBallToggle(sheet, ()=> customRun.goesTo === slot, ()=>{ customRun.goesTo = slot; logEvent('ball_carrier_set', {context:'run_tap', slot}); });
         }
       } else {
         // customPass
@@ -2526,8 +2583,8 @@
           renderSheetOptionGroups(sheet, ROUTES[currentVal].label,
             [{label:'Route:', options: ROUTE_ORDER.map(k=>({value:k,label:ROUTES[k].label}))}],
             currentVal,
-            (val)=>{ customPass.routes[slot] = val; });
-          renderSheetBallToggle(sheet, ()=> customPass.target === slot, ()=>{ customPass.target = slot; });
+            (val)=>{ customPass.routes[slot] = val; logEvent('route_select', {context:'tap', slot, route:val}); });
+          renderSheetBallToggle(sheet, ()=> customPass.target === slot, ()=>{ customPass.target = slot; logEvent('throw_target_select', {context:'tap', slot}); });
         }
       }
 
@@ -2550,6 +2607,7 @@
   setPlay('slantFlat');
   setDefense('cover2');
   setMode('offense');
+  flushTrackingQueue(); // in case last session ended offline with events queued
 
   // ---------- offline caching ----------
   // Registers a service worker so, after the first successful load,
