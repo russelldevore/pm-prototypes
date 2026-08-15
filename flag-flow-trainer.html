@@ -17,6 +17,7 @@
     --chalk:#f2ede1;
     --chalk-dim:#c9c2ae;
     --off-red:#e2544a;
+    --carrier-green:#4caf6e;
     --def-blue:#5b9bd1;
     --flag-gold:#e3b23c;
     --line-white:#ffffff55;
@@ -451,6 +452,7 @@
         <button class="mode-btn active" id="interactionClassicBtn">Classic</button>
         <button class="mode-btn" id="interactionTapBtn">Tap to Assign</button>
       </div>
+      <button class="builder-flip" id="globalFlipBtn" style="display:none;">⇋ Flip formation</button>
 
       <div class="tap-controls" id="tapControls" style="display:none;"></div>
 
@@ -500,7 +502,7 @@
   </details>
 
   <div class="board-shell">
-    <svg id="field" viewBox="0 30 800 423" xmlns="http://www.w3.org/2000/svg"></svg>
+    <svg id="field" viewBox="188.5 -158.5 423 800" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
   <div class="floating-controls" id="floatingControls">
@@ -528,9 +530,14 @@
 
       <div class="legend">
         <span><i class="swatch" style="background:var(--off-red)"></i> Offense</span>
+        <span><i class="swatch" style="background:var(--carrier-green)"></i> Ball carrier</span>
         <span><i class="swatch" style="background:var(--def-blue)"></i> Defense</span>
-        <span><i class="swatch" style="background:var(--flag-gold)"></i> Ball / read</span>
+        <span><i class="swatch" style="background:var(--flag-gold)"></i> Ball flight / read</span>
       </div>
+
+      <div class="assign-group-label" style="margin-top:14px;">Log Result — yards gained</div>
+      <div class="assign-options" id="resultButtons"></div>
+      <div class="tap-hint" id="resultConfirm" style="min-height:1.2em;"></div>
     </div>
   </details>
 
@@ -622,6 +629,14 @@
   const FIELD_TOP = 50, FIELD_BOTTOM = 450;
   const CENTER_Y = 250;
   const HALF_WIDTH = (FIELD_BOTTOM - FIELD_TOP) / 2; // px from center to sideline
+
+  // Pivot point for the -90° rotation that displays the field vertically
+  // (offense attacking toward the top). This is the center of the old
+  // horizontal viewBox (0 30 800 423) — rotating -90° about this point
+  // maps the old landscape box exactly onto the new portrait viewBox
+  // below, with no change to any route/formation/timing math.
+  const ROTATE_PIVOT_X = 400;
+  const ROTATE_PIVOT_Y = 241.5;
 
   // Keeps generated route points a safe margin inside the sidelines
   // (accounts for player bubble radius) rather than drawing off the field.
@@ -1521,49 +1536,61 @@
   // ---------- static field ----------
   function drawField(){
     svg.innerHTML = '';
+    // Everything (static field + all dynamic layers) lives inside this one
+    // group, which carries the -90° rotation that turns the field
+    // vertical. None of the underlying route/formation/timing math
+    // changes — only how it's drawn. Text elements individually carry a
+    // counter-rotation (+90°, about their own position) so labels stay
+    // upright instead of rotating sideways with everything else.
+    rotateGroup = el('g', {id:'rotateGroup', transform:`rotate(-90, ${ROTATE_PIVOT_X}, ${ROTATE_PIVOT_Y})`});
+    svg.appendChild(rotateGroup);
+
     const left = 50, right = 750, top = 50, bottom = 450;
 
     // alternating 5-yard backdrop stripes
     for (let i=0; i<(right-left)/(5*YARD_PX); i++){
       const x = left + i*5*YARD_PX;
-      svg.appendChild(el('rect',{x:x,y:top,width:5*YARD_PX,height:bottom-top,
+      rotateGroup.appendChild(el('rect',{x:x,y:top,width:5*YARD_PX,height:bottom-top,
         fill: i%2===0 ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.05)'}));
     }
     // sidelines
-    svg.appendChild(el('rect',{x:left,y:top,width:right-left,height:bottom-top,fill:'none',stroke:'var(--line-white)','stroke-width':2}));
+    rotateGroup.appendChild(el('rect',{x:left,y:top,width:right-left,height:bottom-top,fill:'none',stroke:'var(--line-white)','stroke-width':2}));
 
     // minor 1-yard ticks
     for (let x = left; x <= right; x += YARD_PX){
       const yard = Math.round((x - FIELD_LEFT) / YARD_PX);
       if (yard % 5 === 0) continue; // majors drawn separately below
-      svg.appendChild(el('line',{x1:x,y1:top,x2:x,y2:bottom,stroke:'var(--line-white)','stroke-width':0.5,opacity:0.22}));
+      rotateGroup.appendChild(el('line',{x1:x,y1:top,x2:x,y2:bottom,stroke:'var(--line-white)','stroke-width':0.5,opacity:0.22}));
     }
     // major 5-yard lines, labeled with the real field number (0–50)
     for (let x = left; x <= right; x += YARD_PX){
       const yard = Math.round((x - FIELD_LEFT) / YARD_PX);
       if (yard % 5 !== 0 || x === LOS_X) continue;
-      svg.appendChild(el('line',{x1:x,y1:top,x2:x,y2:bottom,stroke:'var(--line-white)','stroke-width':1,opacity:0.5}));
-      const lbl = svg.appendChild(el('text',{x:x,y:40,fill:'var(--chalk-dim)','font-size':11,'text-anchor':'middle',
+      rotateGroup.appendChild(el('line',{x1:x,y1:top,x2:x,y2:bottom,stroke:'var(--line-white)','stroke-width':1,opacity:0.5}));
+      const lbl = rotateGroup.appendChild(el('text',{x:x,y:40,fill:'var(--chalk-dim)','font-size':11,'text-anchor':'middle',
+        'transform':`rotate(90, ${x}, 40)`,
         'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'}));
       lbl.textContent = String(yard);
     }
 
     // line of scrimmage (fixed at the 20)
-    svg.appendChild(el('line',{x1:LOS_X,y1:top,x2:LOS_X,y2:bottom,stroke:'var(--flag-gold)','stroke-width':2,'stroke-dasharray':'6,4','opacity':0.8}));
-    svg.appendChild(el('text',{x:LOS_X,y:40,fill:'var(--flag-gold)','font-size':12,'text-anchor':'middle','font-family':'Bradley Hand, Segoe Print, Chalkboard SE, Comic Sans MS, cursive'})).textContent = 'LOS · 20';
+    rotateGroup.appendChild(el('line',{x1:LOS_X,y1:top,x2:LOS_X,y2:bottom,stroke:'var(--flag-gold)','stroke-width':2,'stroke-dasharray':'6,4','opacity':0.8}));
+    rotateGroup.appendChild(el('text',{x:LOS_X,y:40,fill:'var(--flag-gold)','font-size':12,'text-anchor':'middle',
+      'transform':`rotate(90, ${LOS_X}, 40)`,
+      'font-family':'Bradley Hand, Segoe Print, Chalkboard SE, Comic Sans MS, cursive'})).textContent = 'LOS · 20';
     // no-rush arc (5 yd) — decorative
-    svg.appendChild(el('path',{d:`M ${LOS_X} ${top} A ${5*YARD_PX} ${5*YARD_PX} 0 0 0 ${LOS_X} ${bottom}`,
+    rotateGroup.appendChild(el('path',{d:`M ${LOS_X} ${top} A ${5*YARD_PX} ${5*YARD_PX} 0 0 0 ${LOS_X} ${bottom}`,
       fill:'none', stroke:'var(--line-white)','stroke-width':1,'stroke-dasharray':'3,4'}));
   }
 
   // ---------- route preview layer ----------
-  let routeLayer, playerLayer, ballLayer, readLayer;
+  let routeLayer, playerLayer, ballLayer, readLayer, rotateGroup;
 
   function buildLayers(){
-    routeLayer = el('g',{id:'routes'}); svg.appendChild(routeLayer);
-    readLayer  = el('g',{id:'reads'});  svg.appendChild(readLayer);
-    ballLayer  = el('g',{id:'ball'});   svg.appendChild(ballLayer);
-    playerLayer= el('g',{id:'players'});svg.appendChild(playerLayer);
+    routeLayer = el('g',{id:'routes'}); rotateGroup.appendChild(routeLayer);
+    readLayer  = el('g',{id:'reads'});  rotateGroup.appendChild(readLayer);
+    ballLayer  = el('g',{id:'ball'});   rotateGroup.appendChild(ballLayer);
+    playerLayer= el('g',{id:'players'});rotateGroup.appendChild(playerLayer);
   }
 
   function drawRoutePreviews(){
@@ -1624,6 +1651,7 @@
       select.onchange = ()=>{
         if (select.value) ASSIGNMENTS[key] = select.value;
         else delete ASSIGNMENTS[key];
+        logEvent('roster_assign', {context:'offense', slot:key, player:select.value||null});
         render();
       };
       chip.appendChild(role);
@@ -1745,25 +1773,6 @@
     };
     tChip.appendChild(tRole); tChip.appendChild(tSelect);
     panel.appendChild(tChip);
-
-    // flip button
-    const flipBtn = document.createElement('button');
-    flipBtn.className = 'builder-flip';
-    flipBtn.textContent = '⇋ Flip formation';
-    flipBtn.onclick = ()=>{
-      if (customPass.formation === 'proSet' || customPass.formation === 'trips'){
-        customPass.flexSide = customPass.flexSide === 'L' ? 'R' : 'L';
-      } else {
-        const tmp = customPass.routes.WR_L;
-        customPass.routes.WR_L = customPass.routes.WR_R;
-        customPass.routes.WR_R = tmp;
-      }
-      regenerateCustomPass();
-      drawRoutePreviews();
-      buildBuilderPanel();
-      render();
-    };
-    panel.appendChild(flipBtn);
   }
 
   // ---------- custom run builder ----------
@@ -1950,30 +1959,6 @@
       drawRoutePreviews();
       render();
     });
-
-    // flip
-    const flipBtn = document.createElement('button');
-    flipBtn.className = 'builder-flip';
-    flipBtn.textContent = '⇋ Flip formation';
-    flipBtn.onclick = ()=>{
-      if (customRun.formation === 'proSet'){
-        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
-        const tmp = customRun.paths.RB_L; customRun.paths.RB_L = customRun.paths.RB_R; customRun.paths.RB_R = tmp;
-        if (customRun.goesTo === 'RB_L') customRun.goesTo = 'RB_R';
-        else if (customRun.goesTo === 'RB_R') customRun.goesTo = 'RB_L';
-      } else if (customRun.formation === 'trips'){
-        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
-      } else {
-        const tmp = customRun.paths.WR_L; customRun.paths.WR_L = customRun.paths.WR_R; customRun.paths.WR_R = tmp;
-        if (customRun.goesTo === 'WR_L') customRun.goesTo = 'WR_R';
-        else if (customRun.goesTo === 'WR_R') customRun.goesTo = 'WR_L';
-      }
-      regenerateCustomRun();
-      drawRoutePreviews();
-      buildRunBuilderPanel();
-      render();
-    };
-    panel.appendChild(flipBtn);
   }
 
   // ---------- custom defense builder ----------
@@ -2049,6 +2034,7 @@
       select.onchange = ()=>{
         if (select.value) DEF_ASSIGNMENTS[key] = select.value;
         else delete DEF_ASSIGNMENTS[key];
+        logEvent('roster_assign', {context:'defense', slot:key, player:select.value||null});
         render();
       };
       chip.appendChild(role);
@@ -2063,15 +2049,18 @@
     const def = DEFENSES[currentDefense];
     const offenseTappable = interactionMode === 'tap' && (currentPlay === 'customPass' || currentPlay === 'customRun');
     const defenseTappable = interactionMode === 'tap' && currentDefense === 'customDefense';
+    const carrierSlot = play.throw ? play.throw.to : null;
 
     Object.keys(play.routes).forEach(key=>{
       const pos = getPosAtT(play.routes[key], t);
       const g = el('g',{});
-      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:20, fill:'var(--off-red)', stroke:'#2a0a08','stroke-width':1.5}));
+      const isCarrier = key === carrierSlot;
+      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:22, fill: isCarrier ? 'var(--carrier-green)' : 'var(--off-red)', stroke:'#2a0a08','stroke-width':1.5}));
       const assigned = ASSIGNMENTS[key];
-      const label = assigned ? (assigned.length > 6 ? assigned.slice(0,6) : assigned) : (OFF_LABELS[key] || key);
+      const label = assigned ? (assigned.length > 7 ? assigned.slice(0,7) : assigned) : (OFF_LABELS[key] || key);
       const txt = el('text',{x:pos.x, y:pos.y+4, 'text-anchor':'middle',
-        'font-size': assigned ? 10.5 : 14, 'font-weight':700, fill:'#fff',
+        'font-size': assigned ? 12 : 15, 'font-weight':700, fill:'#fff',
+        'transform':`rotate(90, ${pos.x}, ${pos.y+4})`,
         'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
       txt.textContent = label;
       g.appendChild(txt);
@@ -2085,11 +2074,12 @@
     Object.keys(def.routes).forEach(key=>{
       const pos = getPosAtT(def.routes[key], t);
       const g = el('g',{});
-      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:18, fill:'none', stroke:'var(--def-blue)','stroke-width':3}));
+      g.appendChild(el('circle',{cx:pos.x, cy:pos.y, r:20, fill:'none', stroke:'var(--def-blue)','stroke-width':3}));
       const assigned = DEF_ASSIGNMENTS[key];
-      const label = assigned ? (assigned.length > 6 ? assigned.slice(0,6) : assigned) : (DEF_LABELS[key] || key);
+      const label = assigned ? (assigned.length > 7 ? assigned.slice(0,7) : assigned) : (DEF_LABELS[key] || key);
       const txt = el('text',{x:pos.x, y:pos.y+5, 'text-anchor':'middle',
-        'font-size': assigned ? 10.5 : 13, 'font-weight':700, fill:'var(--def-blue)',
+        'font-size': assigned ? 11.5 : 14, 'font-weight':700, fill:'var(--def-blue)',
+        'transform':`rotate(90, ${pos.x}, ${pos.y+5})`,
         'font-family':'-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif'});
       txt.textContent = label;
       g.appendChild(txt);
@@ -2135,7 +2125,8 @@
     const pos = getPosAtT(play.routes[active.target], Math.max(t, active.t));
     const label = active.label;
     const w = Math.max(70, label.length*6.2);
-    const g = el('g',{opacity:0.95});
+    const badgeCenterY = pos.y - 28; // vertical midpoint of the pill, used as the counter-rotation pivot
+    const g = el('g',{opacity:0.95, transform:`rotate(90, ${pos.x}, ${badgeCenterY})`});
     g.appendChild(el('rect',{x:pos.x-w/2, y:pos.y-38, width:w, height:20, rx:10,
       fill:'rgba(227,178,60,0.15)', stroke:'var(--flag-gold)','stroke-width':1}));
     const txt = el('text',{x:pos.x, y:pos.y-24, 'text-anchor':'middle','font-size':10.5,
@@ -2191,6 +2182,7 @@
     document.querySelectorAll('#playTabs .tab').forEach(b=> b.classList.toggle('active', b.dataset.key===key));
     drawRoutePreviews();
     buildLineupPanel();
+    updateGlobalFlipVisibility();
     render();
   }
 
@@ -2344,9 +2336,55 @@
     document.getElementById('modeOffenseBtn').classList.toggle('active', mode === 'offense');
     document.getElementById('modeDefenseBtn').classList.toggle('active', mode === 'defense');
     buildTapControls();
+    updateGlobalFlipVisibility();
   }
   document.getElementById('modeOffenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'offense'}); setMode('offense'); };
   document.getElementById('modeDefenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'defense'}); setMode('defense'); };
+
+  // ---------- shared flip control ----------
+  // One flip button, always visible (Classic or Tap) whenever a
+  // flippable custom offense play is active, instead of being buried
+  // inside the Classic dropdown panels where Tap to Assign couldn't
+  // reach it at all.
+  function updateGlobalFlipVisibility(){
+    const btn = document.getElementById('globalFlipBtn');
+    const relevant = currentMode === 'offense' && (currentPlay === 'customPass' || currentPlay === 'customRun');
+    btn.style.display = relevant ? 'inline-block' : 'none';
+  }
+  function flipActiveFormation(){
+    if (currentPlay === 'customPass'){
+      logEvent('flip', {context:'customPass', formation:customPass.formation});
+      if (customPass.formation === 'proSet' || customPass.formation === 'trips'){
+        customPass.flexSide = customPass.flexSide === 'L' ? 'R' : 'L';
+      } else {
+        const tmp = customPass.routes.WR_L;
+        customPass.routes.WR_L = customPass.routes.WR_R;
+        customPass.routes.WR_R = tmp;
+      }
+      regenerateCustomPass();
+      buildBuilderPanel();
+    } else if (currentPlay === 'customRun'){
+      logEvent('flip', {context:'customRun', formation:customRun.formation});
+      if (customRun.formation === 'proSet'){
+        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
+        const tmp = customRun.paths.RB_L; customRun.paths.RB_L = customRun.paths.RB_R; customRun.paths.RB_R = tmp;
+        if (customRun.goesTo === 'RB_L') customRun.goesTo = 'RB_R';
+        else if (customRun.goesTo === 'RB_R') customRun.goesTo = 'RB_L';
+      } else if (customRun.formation === 'trips'){
+        customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
+      } else {
+        const tmp = customRun.paths.WR_L; customRun.paths.WR_L = customRun.paths.WR_R; customRun.paths.WR_R = tmp;
+        if (customRun.goesTo === 'WR_L') customRun.goesTo = 'WR_R';
+        else if (customRun.goesTo === 'WR_R') customRun.goesTo = 'WR_L';
+      }
+      regenerateCustomRun();
+      buildRunBuilderPanel();
+    }
+    drawRoutePreviews();
+    buildTapControls();
+    render();
+  }
+  document.getElementById('globalFlipBtn').onclick = flipActiveFormation;
 
   // ---------- interaction mode: Classic (dropdowns) vs Tap to Assign ----------
   // Both modes edit the exact same customPass/customRun/customDefense
@@ -2388,6 +2426,7 @@
     }
     buildTapControls();
     drawRoutePreviews();
+    updateGlobalFlipVisibility();
     render();
   }
   document.getElementById('interactionClassicBtn').onclick = ()=>{ logEvent('interaction_mode', {mode:'classic'}); setInteractionMode('classic'); };
@@ -2456,6 +2495,7 @@
 
   // Roster row — same idea as the Lineup panel, just inline in the sheet.
   function renderSheetRoster(sheet, slot, assignmentsObj, onChange){
+    const context = (assignmentsObj === DEF_ASSIGNMENTS) ? 'defense' : 'offense';
     const lbl = document.createElement('div');
     lbl.className = 'assign-group-label';
     lbl.textContent = 'Player';
@@ -2465,13 +2505,13 @@
     const blank = document.createElement('button');
     blank.className = 'assign-option-btn' + (!assignmentsObj[slot] ? ' current' : '');
     blank.textContent = '—';
-    blank.onclick = ()=>{ delete assignmentsObj[slot]; onChange(); rerenderSheetBody(); };
+    blank.onclick = ()=>{ delete assignmentsObj[slot]; logEvent('roster_assign', {context:'tap_'+context, slot, player:null}); onChange(); rerenderSheetBody(); };
     grid.appendChild(blank);
     ROSTER.forEach(name=>{
       const b = document.createElement('button');
       b.className = 'assign-option-btn' + (assignmentsObj[slot] === name ? ' current' : '');
       b.textContent = name;
-      b.onclick = ()=>{ assignmentsObj[slot] = name; onChange(); rerenderSheetBody(); };
+      b.onclick = ()=>{ assignmentsObj[slot] = name; logEvent('roster_assign', {context:'tap_'+context, slot, player:name}); onChange(); rerenderSheetBody(); };
       grid.appendChild(b);
     });
     sheet.appendChild(grid);
@@ -2600,6 +2640,68 @@
     root.appendChild(backdrop);
   }
 
+  // ---------- play result logging ----------
+  // Self-contained snapshot: every play_result event carries the FULL
+  // configuration that was live at the moment it's logged (formation,
+  // every slot's assignment, roster, QB action / ball carrier where
+  // relevant) — not just a play name. That way each row stands on its
+  // own and doesn't depend on reconstructing prior edit events to make
+  // sense of what was actually run.
+  function buildPlaySnapshot(){
+    const offenseDetail = { play: currentPlay };
+    if (currentPlay === 'customPass'){
+      offenseDetail.formation = customPass.formation;
+      offenseDetail.routes = Object.assign({}, customPass.routes);
+      offenseDetail.target = customPass.target;
+    } else if (currentPlay === 'customRun'){
+      offenseDetail.formation = customRun.formation;
+      offenseDetail.qbAction = customRun.qbAction;
+      offenseDetail.paths = Object.assign({}, customRun.paths);
+      offenseDetail.goesTo = customRun.goesTo;
+    }
+    const defenseDetail = { defense: currentDefense };
+    if (currentDefense === 'customDefense'){
+      defenseDetail.paths = Object.assign({}, customDefense.paths);
+    }
+    return {
+      offense: offenseDetail,
+      defense: defenseDetail,
+      offenseRoster: Object.assign({}, ASSIGNMENTS),
+      defenseRoster: Object.assign({}, DEF_ASSIGNMENTS)
+    };
+  }
+
+  function logPlayResult(yards, btn){
+    const snapshot = buildPlaySnapshot();
+    logEvent('play_result', Object.assign({ yards }, snapshot));
+    const confirm = document.getElementById('resultConfirm');
+    confirm.textContent = 'Logged: ' + (yards > 0 ? '+' : '') + yards + ' yards';
+    setTimeout(()=>{ if (confirm.textContent.indexOf(String(yards)) !== -1) confirm.textContent = ''; }, 2500);
+  }
+
+  function buildResultButtons(){
+    const panel = document.getElementById('resultButtons');
+    panel.innerHTML = '';
+    const values = [-5, -2, 0, 2, 3, 5, 8, 10, 15, 20, 25];
+    values.forEach(v=>{
+      const b = document.createElement('button');
+      b.className = 'assign-option-btn';
+      b.textContent = (v > 0 ? '+' : '') + v;
+      b.onclick = ()=> logPlayResult(v, b);
+      panel.appendChild(b);
+    });
+    // catch-all for long gains, since a fixed button list can't cover everything
+    const bigBtn = document.createElement('button');
+    bigBtn.className = 'assign-option-btn';
+    bigBtn.textContent = '30+';
+    bigBtn.onclick = ()=>{
+      const val = prompt('Yards gained:');
+      const n = parseInt(val, 10);
+      if (!isNaN(n)) logPlayResult(n, bigBtn);
+    };
+    panel.appendChild(bigBtn);
+  }
+
   // ---------- init ----------
   drawField();
   buildLayers();
@@ -2607,6 +2709,7 @@
   setPlay('slantFlat');
   setDefense('cover2');
   setMode('offense');
+  buildResultButtons();
   flushTrackingQueue(); // in case last session ended offline with events queued
 
   // ---------- offline caching ----------
