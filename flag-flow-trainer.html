@@ -105,13 +105,14 @@
      a phone in landscape), scaling to fill the full available width
      would make it absurdly tall. Capping board-shell's max-width to a
      value derived from the field's own aspect ratio (height = width *
-     800/471.5) keeps the resulting field height around 75vh regardless
+     800/460.5) keeps the resulting field height around 85vh regardless
      of how wide the screen actually is — using the same simple
      width:100%/height:auto SVG rule above, no distortion, no
-     percentage-height edge cases. */
+     percentage-height edge cases. This rule only fires above 700px,
+     so it's fully isolated from phone-portrait sizing. */
   @media (min-width: 700px){
     .board-shell{
-      max-width: 44vh;
+      max-width: 48vh;
       margin-left: auto;
       margin-right: auto;
     }
@@ -523,7 +524,7 @@
   </details>
 
   <div class="board-shell">
-    <svg id="field" viewBox="140 -158.5 471.5 800" xmlns="http://www.w3.org/2000/svg"></svg>
+    <svg id="field" viewBox="160 -158.5 460.5 800" xmlns="http://www.w3.org/2000/svg"></svg>
   </div>
 
   <div class="floating-controls" id="floatingControls">
