@@ -285,6 +285,34 @@
   .legend span{ display:inline-flex; align-items:center; gap:6px; }
   .swatch{ width:12px; height:12px; border-radius:50%; display:inline-block; }
 
+  .btn.active{ border-color:var(--flag-gold); color:var(--flag-gold); }
+
+  /* Live yards-from-LOS / yards-from-center readout — lets a coach pause
+     mid-play and read a precise position back, instead of eyeballing
+     pixels off a screenshot. Toggled by the 📍 button in floating-controls. */
+  .coords-panel{
+    position:absolute;
+    top:64px;
+    right:10px;
+    z-index:400;
+    background:rgba(10,20,15,0.9);
+    border:1px solid var(--panel-line);
+    border-radius:10px;
+    padding:8px 10px;
+    font-size:0.72rem;
+    line-height:1.5;
+    color:var(--chalk);
+    font-family:'SF Mono', 'Courier New', monospace;
+    max-width:165px;
+    pointer-events:none;
+  }
+  .coords-panel .coords-title{
+    color:var(--flag-gold);
+    font-weight:700;
+    margin-bottom:2px;
+  }
+  .coords-panel .coords-carrier{ color:var(--carrier-green); }
+
   .lineup-panel{
     display:flex; flex-wrap:wrap; gap:10px; align-items:center;
     margin-bottom:10px;
@@ -617,6 +645,7 @@
     <button class="field-flip-btn" id="globalFlipBtn" style="display:none;" title="Flip formation">⇋</button>
     <button class="field-flip-btn right" id="flipEndsBtn" style="display:flex;" title="Flip ends (view from defense's perspective)">⇅</button>
     <svg id="field" viewBox="160 -158.5 460.5 800" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="coords-panel" id="coordsPanel" style="display:none;"></div>
   </div>
 
   <div class="floating-controls" id="floatingControls">
@@ -631,6 +660,8 @@
       <option value="0.18" selected>Normal</option>
       <option value="0.3">Fast</option>
     </select>
+    <button class="btn extra-control" id="coordsToggleBtn" title="Show player coordinates (yards from LOS / center)">📍</button>
+    <button class="btn extra-control" id="exportTrajectoryBtn" title="Export full trajectory table (yards, every player, every moment)">⬇</button>
     <button class="fc-toggle" id="fcToggle" title="Minimize">⌄</button>
   </div>
 
@@ -660,6 +691,17 @@
   </details>
 
   <footer>Prototype teaching tool — canned plays &amp; coverages, built to expand later.</footer>
+
+  <div class="assign-sheet-backdrop" id="trajectorySheetBackdrop" style="display:none;">
+    <div class="assign-sheet label-sheet" style="max-width:480px;">
+      <h3>Full trajectory (yards)</h3>
+      <p class="assign-current">Every player's position, sampled every 0.02 of play time — depth from the LOS and width from the Center, same units as the 📍 readout. Select all &amp; copy, then paste straight into a sheet.</p>
+      <p class="assign-current" id="trajectoryThrowsSummary" style="font-family:'SF Mono','Courier New',monospace; font-size:0.72rem;"></p>
+      <textarea id="trajectoryExportText" readonly style="width:100%; min-height:260px; box-sizing:border-box; background:var(--panel); border:1px solid var(--panel-line); border-radius:8px; color:var(--chalk); font-family:'SF Mono','Courier New',monospace; font-size:0.72rem; padding:8px; resize:vertical;"></textarea>
+      <button class="assign-sheet-close" id="trajectoryCopyBtn" style="background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); margin-top:8px;">Copy to clipboard</button>
+      <button class="assign-sheet-close" id="trajectoryCloseBtn" style="margin-top:8px;">Close</button>
+    </div>
+  </div>
 
   <div class="assign-sheet-backdrop" id="rosterSheetBackdrop" style="display:none;">
     <div class="assign-sheet label-sheet" style="max-width:400px;">
@@ -916,28 +958,91 @@
   // Each is function(startX,startY) -> LOCAL waypoints, t:0..1 representing
   // just the run itself. The run builder time-shifts these to start
   // wherever the exchange (handoff/toss) actually happens in the play.
-  function offTackleArc(sx,sy,dirSign){
-    return [{t:0,x:sx,y:sy},
-            {t:0.35,x:sx+2*YARD_PX,y:clampY(sy+dirSign*5*YARD_PX)},
-            {t:0.6, x:sx+9*YARD_PX,y:clampY(sy+dirSign*6*YARD_PX)},
-            {t:1,   x:sx+20*YARD_PX,y:clampY(sy+dirSign*6.5*YARD_PX)}];
+  // A rounded "belly" run path: the carrier drifts wide and only picks up
+  // a little real ground at first — bellying away from the LOS to let
+  // blocks set up — then bends hard upfield through the hole/edge. The
+  // belly's widest point (peakWidthYd) is wider than where he actually
+  // ends up (peakWidthYd - cutInYd), so the last stretch reads as a
+  // deliberate cut upfield rather than the belly just petering out.
+  function bellyArc(sx, sy, dirSign, gainYd, peakWidthYd, cutInYd){
+    const G = gainYd*YARD_PX, W = peakWidthYd*YARD_PX, C = (cutInYd||0)*YARD_PX;
+    return [
+      {t:0,    x:sx,        y:sy},
+      {t:0.3,  x:sx+0.12*G, y:clampY(sy+dirSign*0.65*W)},
+      {t:0.55, x:sx+0.4*G,  y:clampY(sy+dirSign*W)},
+      {t:0.8,  x:sx+0.75*G, y:clampY(sy+dirSign*(W-0.5*C))},
+      {t:1,    x:sx+G,      y:clampY(sy+dirSign*(W-C))}
+    ];
   }
-  function sweepArc(sx,sy,dirSign){
-    return [{t:0,x:sx,y:sy},
-            {t:0.25,x:sx+1*YARD_PX,y:clampY(sy+dirSign*8*YARD_PX)},
-            {t:1,   x:sx+20*YARD_PX,y:clampY(sy+dirSign*9*YARD_PX)}];
+  function offTackleArc(sx,sy,dirSign){ return bellyArc(sx,sy,dirSign, 20, 8, 1.5); }
+  function sweepArc(sx,sy,dirSign){ return bellyArc(sx,sy,dirSign, 20, 10, 1); }
+
+  // The real RB sweep motion — measured directly off the field (yards
+  // behind the LOS / yards from center, sampled every 0.02 of the play)
+  // rather than a generic curve formula. An RB sweep isn't "stand still,
+  // then run a belly arc from the mesh point" — the back is already
+  // stepping before the exchange (a shallow drop-and-widen), takes the
+  // ball still moving, holds that backfield depth while he finishes
+  // building width, THEN cuts upfield, then runs it out straight once
+  // he's turned the corner. dDepth/dWidth are yards of MOVEMENT from the
+  // snap spot (positive dDepth = further behind the LOS than the start;
+  // positive dWidth = further toward the direction he's sweeping), so
+  // this generalizes to either alignment — sx/sy is wherever this
+  // particular RB actually lines up, not a hardcoded field spot.
+  const SWEEP_RB_KEYFRAMES = [
+    {t:0.00, dDepth:0,     dWidth:0},
+    {t:0.10, dDepth:0.5,   dWidth:1.62},
+    {t:0.20, dDepth:1.0,   dWidth:4.33},
+    {t:0.28, dDepth:1.0,   dWidth:6.9},
+    {t:0.36, dDepth:1.0,   dWidth:8.2},
+    {t:0.52, dDepth:-4.64, dWidth:10.8},
+    {t:0.70, dDepth:-10.1, dWidth:13.1},
+    {t:1.00, dDepth:-20.0, dWidth:13.1}
+  ];
+  function sweepRBPath(sx, sy, dirSign){
+    return SWEEP_RB_KEYFRAMES.map(k => ({
+      t: k.t,
+      x: sx - k.dDepth*YARD_PX,
+      y: clampY(sy + dirSign*k.dWidth*YARD_PX)
+    }));
   }
+
+  // dir: which way this path breaks (-1 left, +1 right, 0 straight ahead) —
+  // used to figure out which RB a crossing WR sweep should mesh past.
+  // pullUpYd: for the "option to pass" mechanic, how many yards behind the
+  // LOS the carrier still is when he pulls up — i.e. how far along THIS
+  // path (not a generic time delay) the pull-up point sits. Off-tackle
+  // hits its cut fast, so it pulls up shallow; sweep develops slower and
+  // wider, so it holds longer before pulling up.
+  // rbGenerate (sweep only): the measured, self-timed shape above — used
+  // instead of generate() specifically for an RB-type slot on a Handoff,
+  // where it replaces the generic "hold, then run a belly arc" mechanic
+  // entirely. generate() itself is untouched and still drives a WR's
+  // post-mesh cut (and anything not yet re-measured, like Off-Tackle).
   const RUN_PATHS = {
-    dive: { label:'Dive', generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx+20*YARD_PX,y:sy}]; }},
-    offTackleLeft: { label:'Off-Tackle (Left)', generate(sx,sy){ return offTackleArc(sx,sy,-1); }},
-    offTackleRight: { label:'Off-Tackle (Right)', generate(sx,sy){ return offTackleArc(sx,sy,1); }},
-    sweepLeft: { label:'Sweep (Left)', generate(sx,sy){ return sweepArc(sx,sy,-1); }},
-    sweepRight: { label:'Sweep (Right)', generate(sx,sy){ return sweepArc(sx,sy,1); }}
+    dive: { label:'Dive', dir:0, pullUpYd:5, generate(sx,sy){ return [{t:0,x:sx,y:sy},{t:1,x:sx+20*YARD_PX,y:sy}]; }},
+    offTackleLeft: { label:'Off-Tackle (Left)', dir:-1, pullUpYd:5, generate(sx,sy){ return offTackleArc(sx,sy,-1); }},
+    offTackleRight: { label:'Off-Tackle (Right)', dir:1, pullUpYd:5, generate(sx,sy){ return offTackleArc(sx,sy,1); }},
+    sweepLeft: { label:'Sweep (Left)', dir:-1, pullUpYd:7, generate(sx,sy){ return sweepArc(sx,sy,-1); }, rbGenerate(sx,sy){ return sweepRBPath(sx,sy,-1); }},
+    sweepRight: { label:'Sweep (Right)', dir:1, pullUpYd:7, generate(sx,sy){ return sweepArc(sx,sy,1); }, rbGenerate(sx,sy){ return sweepRBPath(sx,sy,1); }}
   };
   const RUN_PATH_ORDER = ['dive','offTackleLeft','offTackleRight','sweepLeft','sweepRight'];
   const RUN_PATH_KEYS = Object.keys(RUN_PATHS);
   const PATH_ORDER = RUN_PATH_ORDER.concat(ROUTE_ORDER); // combined dropdown: run paths first, then routes
   const QB_ACTION_LABELS = { handoff:'Handoff', delayedHandoff:'Delayed Handoff (Draw)', toss:'Toss' };
+  // Finds the t at which a set of (t,x) waypoints first reaches targetX,
+  // interpolating between the surrounding pair. Assumes x is
+  // non-decreasing along the path, which every run/belly path here is.
+  function findTAtX(waypoints, targetX){
+    for (let i=1;i<waypoints.length;i++){
+      const a = waypoints[i-1], b = waypoints[i];
+      if (b.x >= targetX){
+        if (b.x === a.x) return a.t;
+        return a.t + (targetX-a.x)/(b.x-a.x)*(b.t-a.t);
+      }
+    }
+    return waypoints[waypoints.length-1].t;
+  }
 
   // ---------- defensive formation & action library ----------
   // A single base shell: 2-2-1 (2 corners, 2 linebackers, 1 safety).
@@ -1519,6 +1624,2345 @@
       "type": "handoff"
     }
   },
+  "power": {
+    "name": "Power",
+    "desc": "<b>Power.</b> Pro Set run to the right. The QB meshes with RB (L), who takes the handoff wide and bounces it outside the numbers instead of cutting up inside &mdash; give him room to work with before he turns it upfield. RB (R) releases downfield as a trailing lead blocker rather than staying home, and X clears vertically up the sideline to hold the corner out of the play.",
+    "routes": {
+            "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 281.7, "y": 250 },
+        { "t": 0.04, "x": 275.4, "y": 250 },
+        { "t": 0.06, "x": 269.1, "y": 250 },
+        { "t": 0.08, "x": 262.8, "y": 250 },
+        { "t": 0.1, "x": 256.5, "y": 250 },
+        { "t": 0.12, "x": 250.2, "y": 250 },
+        { "t": 0.14, "x": 243.9, "y": 250 },
+        { "t": 0.16, "x": 237.6, "y": 250 },
+        { "t": 0.18, "x": 231.3, "y": 250 },
+        { "t": 0.2, "x": 225, "y": 250 },
+        { "t": 0.22, "x": 225, "y": 247.6 },
+        { "t": 0.24, "x": 225, "y": 247.5 },
+        { "t": 0.26, "x": 225, "y": 247.5 },
+        { "t": 0.28, "x": 225, "y": 247.3 },
+        { "t": 0.3, "x": 225, "y": 247.3 },
+        { "t": 0.32, "x": 225, "y": 247.2 },
+        { "t": 0.34, "x": 225, "y": 247.2 },
+        { "t": 0.36, "x": 225, "y": 247.1 },
+        { "t": 0.38, "x": 225, "y": 247.1 },
+        { "t": 0.4, "x": 225, "y": 246.9 },
+        { "t": 0.42, "x": 225, "y": 246.9 },
+        { "t": 0.44, "x": 225, "y": 246.8 },
+        { "t": 0.46, "x": 225, "y": 246.8 },
+        { "t": 0.48, "x": 225, "y": 246.6 },
+        { "t": 0.5, "x": 225, "y": 246.6 },
+        { "t": 0.52, "x": 225, "y": 246.5 },
+        { "t": 0.54, "x": 225, "y": 246.5 },
+        { "t": 0.56, "x": 225, "y": 246.4 },
+        { "t": 0.58, "x": 225, "y": 246.4 },
+        { "t": 0.6, "x": 225, "y": 246.2 },
+        { "t": 0.62, "x": 225, "y": 246.2 },
+        { "t": 0.64, "x": 225, "y": 246.1 },
+        { "t": 0.66, "x": 225, "y": 246.1 },
+        { "t": 0.68, "x": 225, "y": 245.9 },
+        { "t": 0.7, "x": 225, "y": 245.9 },
+        { "t": 0.72, "x": 225, "y": 245.8 },
+        { "t": 0.74, "x": 225, "y": 245.8 },
+        { "t": 0.76, "x": 225, "y": 245.7 },
+        { "t": 0.78, "x": 225, "y": 245.7 },
+        { "t": 0.8, "x": 225, "y": 245.5 },
+        { "t": 0.82, "x": 225, "y": 245.5 },
+        { "t": 0.84, "x": 225, "y": 245.4 },
+        { "t": 0.86, "x": 225, "y": 245.4 },
+        { "t": 0.88, "x": 225, "y": 245.2 },
+        { "t": 0.9, "x": 225, "y": 245.2 },
+        { "t": 0.92, "x": 225, "y": 245.1 },
+        { "t": 0.94, "x": 225, "y": 245.1 },
+        { "t": 0.96, "x": 225, "y": 245 },
+        { "t": 0.98, "x": 225, "y": 245 },
+        { "t": 1, "x": 225, "y": 244.8 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 330, "y": 250 },
+        { "t": 0.04, "x": 330, "y": 250 },
+        { "t": 0.06, "x": 330, "y": 250 },
+        { "t": 0.08, "x": 330, "y": 250 },
+        { "t": 0.1, "x": 330, "y": 250 },
+        { "t": 0.12, "x": 330, "y": 250 },
+        { "t": 0.14, "x": 330, "y": 250 },
+        { "t": 0.16, "x": 330, "y": 250 },
+        { "t": 0.18, "x": 330, "y": 250 },
+        { "t": 0.2, "x": 330, "y": 250 },
+        { "t": 0.22, "x": 330, "y": 250 },
+        { "t": 0.24, "x": 330, "y": 250 },
+        { "t": 0.26, "x": 330, "y": 250 },
+        { "t": 0.28, "x": 330, "y": 250 },
+        { "t": 0.3, "x": 330, "y": 250 },
+        { "t": 0.32, "x": 330, "y": 250 },
+        { "t": 0.34, "x": 330, "y": 250 },
+        { "t": 0.36, "x": 330, "y": 250 },
+        { "t": 0.38, "x": 330, "y": 250 },
+        { "t": 0.4, "x": 330, "y": 250 },
+        { "t": 0.42, "x": 330, "y": 250 },
+        { "t": 0.44, "x": 330, "y": 250 },
+        { "t": 0.46, "x": 330, "y": 250 },
+        { "t": 0.48, "x": 330, "y": 250 },
+        { "t": 0.5, "x": 330, "y": 250 },
+        { "t": 0.52, "x": 330, "y": 250 },
+        { "t": 0.54, "x": 330, "y": 250 },
+        { "t": 0.56, "x": 330, "y": 250 },
+        { "t": 0.58, "x": 330, "y": 250 },
+        { "t": 0.6, "x": 330, "y": 250 },
+        { "t": 0.62, "x": 330, "y": 250 },
+        { "t": 0.64, "x": 330, "y": 250 },
+        { "t": 0.66, "x": 330, "y": 250 },
+        { "t": 0.68, "x": 330, "y": 250 },
+        { "t": 0.7, "x": 330, "y": 250 },
+        { "t": 0.72, "x": 330, "y": 250 },
+        { "t": 0.74, "x": 330, "y": 250 },
+        { "t": 0.76, "x": 330, "y": 250 },
+        { "t": 0.78, "x": 330, "y": 250 },
+        { "t": 0.8, "x": 330, "y": 250 },
+        { "t": 0.82, "x": 330, "y": 250 },
+        { "t": 0.84, "x": 330, "y": 250 },
+        { "t": 0.86, "x": 330, "y": 250 },
+        { "t": 0.88, "x": 330, "y": 250 },
+        { "t": 0.9, "x": 330, "y": 250 },
+        { "t": 0.92, "x": 330, "y": 250 },
+        { "t": 0.94, "x": 330, "y": 250 },
+        { "t": 0.96, "x": 330, "y": 250 },
+        { "t": 0.98, "x": 330, "y": 250 },
+        { "t": 1, "x": 330, "y": 250 }
+      ],
+      "WR": [
+        { "t": 0, "x": 330, "y": 116.7 },
+        { "t": 0.02, "x": 337.6, "y": 116.7 },
+        { "t": 0.04, "x": 345.1, "y": 116.7 },
+        { "t": 0.06, "x": 352.7, "y": 116.7 },
+        { "t": 0.08, "x": 360.2, "y": 116.7 },
+        { "t": 0.1, "x": 367.8, "y": 116.7 },
+        { "t": 0.12, "x": 375.4, "y": 116.7 },
+        { "t": 0.14, "x": 382.9, "y": 116.7 },
+        { "t": 0.16, "x": 390.5, "y": 116.7 },
+        { "t": 0.18, "x": 398, "y": 116.7 },
+        { "t": 0.2, "x": 405.6, "y": 116.7 },
+        { "t": 0.22, "x": 413.2, "y": 116.7 },
+        { "t": 0.24, "x": 420.7, "y": 116.7 },
+        { "t": 0.26, "x": 428.3, "y": 116.7 },
+        { "t": 0.28, "x": 435.8, "y": 116.7 },
+        { "t": 0.3, "x": 443.4, "y": 116.7 },
+        { "t": 0.32, "x": 451, "y": 116.7 },
+        { "t": 0.34, "x": 458.5, "y": 116.7 },
+        { "t": 0.36, "x": 466.1, "y": 116.7 },
+        { "t": 0.38, "x": 473.6, "y": 116.7 },
+        { "t": 0.4, "x": 481.2, "y": 116.7 },
+        { "t": 0.42, "x": 488.8, "y": 116.7 },
+        { "t": 0.44, "x": 496.3, "y": 116.7 },
+        { "t": 0.46, "x": 503.9, "y": 116.7 },
+        { "t": 0.48, "x": 511.4, "y": 116.7 },
+        { "t": 0.5, "x": 519, "y": 116.7 },
+        { "t": 0.52, "x": 526.6, "y": 116.7 },
+        { "t": 0.54, "x": 534.1, "y": 116.7 },
+        { "t": 0.56, "x": 541.7, "y": 116.7 },
+        { "t": 0.58, "x": 549.2, "y": 116.7 },
+        { "t": 0.6, "x": 556.8, "y": 116.7 },
+        { "t": 0.62, "x": 564.4, "y": 116.7 },
+        { "t": 0.64, "x": 571.9, "y": 116.7 },
+        { "t": 0.66, "x": 579.5, "y": 116.7 },
+        { "t": 0.68, "x": 587, "y": 116.7 },
+        { "t": 0.7, "x": 594.6, "y": 116.7 },
+        { "t": 0.72, "x": 602.2, "y": 116.7 },
+        { "t": 0.74, "x": 609.7, "y": 116.7 },
+        { "t": 0.76, "x": 617.3, "y": 116.7 },
+        { "t": 0.78, "x": 624.8, "y": 116.7 },
+        { "t": 0.8, "x": 632.4, "y": 116.7 },
+        { "t": 0.82, "x": 640, "y": 116.7 },
+        { "t": 0.84, "x": 647.5, "y": 116.7 },
+        { "t": 0.86, "x": 655.1, "y": 116.7 },
+        { "t": 0.88, "x": 662.6, "y": 116.7 },
+        { "t": 0.9, "x": 670.2, "y": 116.7 },
+        { "t": 0.92, "x": 677.8, "y": 116.7 },
+        { "t": 0.94, "x": 685.3, "y": 116.7 },
+        { "t": 0.96, "x": 692.9, "y": 116.7 },
+        { "t": 0.98, "x": 700.4, "y": 116.7 },
+        { "t": 1, "x": 708, "y": 116.7 }
+      ],
+            "RB_L": [
+        { "t": 0, "x": 225, "y": 187 },
+        { "t": 0.02, "x": 223.6, "y": 192.6 },
+        { "t": 0.04, "x": 222.2, "y": 198.2 },
+        { "t": 0.06, "x": 220.8, "y": 203.8 },
+        { "t": 0.08, "x": 219.4, "y": 209.4 },
+        { "t": 0.1, "x": 218, "y": 215 },
+        { "t": 0.12, "x": 216.6, "y": 220.6 },
+        { "t": 0.14, "x": 215.2, "y": 226.2 },
+        { "t": 0.16, "x": 213.8, "y": 231.8 },
+        { "t": 0.18, "x": 212.4, "y": 237.4 },
+        { "t": 0.2, "x": 211, "y": 243 },
+        { "t": 0.22, "x": 211, "y": 248.6 },
+        { "t": 0.24, "x": 211, "y": 254.2 },
+        { "t": 0.26, "x": 211, "y": 259.8 },
+        { "t": 0.28, "x": 211, "y": 265.4 },
+        { "t": 0.3, "x": 211, "y": 271 },
+        { "t": 0.32, "x": 211, "y": 276.6 },
+        { "t": 0.34, "x": 211, "y": 282.2 },
+        { "t": 0.36, "x": 211, "y": 287.8 },
+        { "t": 0.38, "x": 213.8, "y": 293.4 },
+        { "t": 0.4, "x": 216.6, "y": 299 },
+        { "t": 0.42, "x": 220.8, "y": 304.6 },
+        { "t": 0.44, "x": 225, "y": 310.2 },
+        { "t": 0.46, "x": 229.2, "y": 315.8 },
+        { "t": 0.48, "x": 233.4, "y": 321.4 },
+        { "t": 0.5, "x": 237.6, "y": 327 },
+        { "t": 0.52, "x": 241.8, "y": 332.6 },
+        { "t": 0.54, "x": 246, "y": 338.2 },
+        { "t": 0.56, "x": 250.2, "y": 343.8 },
+        { "t": 0.58, "x": 253, "y": 349.4 },
+        { "t": 0.6, "x": 255.8, "y": 355 },
+        { "t": 0.62, "x": 258.6, "y": 360.6 },
+        { "t": 0.64, "x": 266.44, "y": 366.2 },
+        { "t": 0.66, "x": 274.28, "y": 371.8 },
+        { "t": 0.68, "x": 282.12, "y": 377.4 },
+        { "t": 0.7, "x": 289.96, "y": 383 },
+        { "t": 0.72, "x": 297.8, "y": 388.6 },
+        { "t": 0.74, "x": 305.64, "y": 394.2 },
+        { "t": 0.76, "x": 313.48, "y": 399.8 },
+        { "t": 0.78, "x": 321.32, "y": 405.4 },
+        { "t": 0.8, "x": 329.16, "y": 411 },
+        { "t": 0.82, "x": 337, "y": 416.6 },
+        { "t": 0.84, "x": 346.8, "y": 422.2 },
+        { "t": 0.86, "x": 356.6, "y": 422.2 },
+        { "t": 0.88, "x": 366.4, "y": 422.2 },
+        { "t": 0.9, "x": 376.2, "y": 422.2 },
+        { "t": 0.92, "x": 386, "y": 422.2 },
+        { "t": 0.94, "x": 395.8, "y": 422.2 },
+        { "t": 0.96, "x": 405.6, "y": 422.2 },
+        { "t": 0.98, "x": 415.4, "y": 422.2 },
+        { "t": 1, "x": 425.2, "y": 422.2 }
+      ],
+      "RB_R": [
+        { "t": 0, "x": 225, "y": 313 },
+        { "t": 0.02, "x": 225, "y": 313 },
+        { "t": 0.04, "x": 225, "y": 313 },
+        { "t": 0.06, "x": 225, "y": 313 },
+        { "t": 0.08, "x": 225, "y": 313 },
+        { "t": 0.1, "x": 227.8, "y": 319.02 },
+        { "t": 0.12, "x": 230.6, "y": 325.18 },
+        { "t": 0.14, "x": 233.4, "y": 326.3 },
+        { "t": 0.16, "x": 236.2, "y": 327.42 },
+        { "t": 0.18, "x": 239, "y": 328.54 },
+        { "t": 0.2, "x": 241.8, "y": 329.66 },
+        { "t": 0.22, "x": 244.6, "y": 330.78 },
+        { "t": 0.24, "x": 247.4, "y": 331.9 },
+        { "t": 0.26, "x": 250.2, "y": 333.02 },
+        { "t": 0.28, "x": 253, "y": 334.14 },
+        { "t": 0.3, "x": 255.8, "y": 335.26 },
+        { "t": 0.32, "x": 258.6, "y": 336.38 },
+        { "t": 0.34, "x": 266.44, "y": 337.5 },
+        { "t": 0.36, "x": 274.28, "y": 338.62 },
+        { "t": 0.38, "x": 282.12, "y": 339.74 },
+        { "t": 0.4, "x": 289.96, "y": 340.86 },
+        { "t": 0.42, "x": 297.8, "y": 341.98 },
+        { "t": 0.44, "x": 305.64, "y": 343.1 },
+        { "t": 0.46, "x": 313.48, "y": 344.22 },
+        { "t": 0.48, "x": 321.32, "y": 345.34 },
+        { "t": 0.5, "x": 329.16, "y": 346.46 },
+        { "t": 0.52, "x": 337, "y": 347.58 },
+        { "t": 0.54, "x": 346.8, "y": 348.7 },
+        { "t": 0.56, "x": 356.6, "y": 349.82 },
+        { "t": 0.58, "x": 366.4, "y": 350.94 },
+        { "t": 0.6, "x": 376.2, "y": 352.06 },
+        { "t": 0.62, "x": 386, "y": 353.18 },
+        { "t": 0.64, "x": 395.8, "y": 354.3 },
+        { "t": 0.66, "x": 405.6, "y": 355.42 },
+        { "t": 0.68, "x": 415.4, "y": 356.54 },
+        { "t": 0.7, "x": 425.2, "y": 357.66 },
+        { "t": 0.72, "x": 435, "y": 358.78 },
+        { "t": 0.74, "x": 443.68, "y": 359.9 },
+        { "t": 0.76, "x": 452.5, "y": 361.02 },
+        { "t": 0.78, "x": 461.32, "y": 362.14 },
+        { "t": 0.8, "x": 470, "y": 363.26 },
+        { "t": 0.82, "x": 478.68, "y": 364.38 },
+        { "t": 0.84, "x": 487.5, "y": 365.5 },
+        { "t": 0.86, "x": 496.32, "y": 366.62 },
+        { "t": 0.88, "x": 505, "y": 367.74 },
+        { "t": 0.9, "x": 505, "y": 367.74 },
+        { "t": 0.92, "x": 505, "y": 367.74 },
+        { "t": 0.94, "x": 505, "y": 367.74 },
+        { "t": 0.96, "x": 505, "y": 367.74 },
+        { "t": 0.98, "x": 505, "y": 367.74 },
+        { "t": 1, "x": 505, "y": 367.74 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.2,
+        "label": "Mesh \u2014 Handoff",
+        "target": "RB_L"
+      },
+      {
+        "t": 0.5,
+        "label": "Bounces it outside",
+        "target": "RB_L"
+      },
+      {
+        "t": 0.7,
+        "label": "RB (R) leads downfield",
+        "target": "RB_R"
+      }
+    ],
+    "throw": {
+      "t0": 0.18,
+      "t1": 0.23,
+      "from": "QB",
+      "to": "RB_L",
+      "type": "handoff"
+    }
+  },
+  "flySweep": {
+    "name": "Fly Sweep",
+    "desc": "<b>Fly Sweep.</b> Pro Set jet sweep. X goes in motion and takes the handoff in stride right as he crosses the Center, then turns it upfield outside the numbers &mdash; same wide-bounce shape as Power, just delivered on the move instead of off a stationary mesh. Both RBs work opposite the sweep.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 288, "y": 250 },
+        { "t": 0.04, "x": 288, "y": 250.1 },
+        { "t": 0.06, "x": 288, "y": 250.1 },
+        { "t": 0.08, "x": 288, "y": 250.3 },
+        { "t": 0.1, "x": 288, "y": 250.3 },
+        { "t": 0.12, "x": 288, "y": 250.4 },
+        { "t": 0.14, "x": 288, "y": 250.4 },
+        { "t": 0.16, "x": 288, "y": 250.4 },
+        { "t": 0.18, "x": 288, "y": 250.6 },
+        { "t": 0.2, "x": 288, "y": 250.6 },
+        { "t": 0.22, "x": 288, "y": 250.7 },
+        { "t": 0.24, "x": 288, "y": 250.7 },
+        { "t": 0.26, "x": 288, "y": 250.8 },
+        { "t": 0.28, "x": 288, "y": 250.8 },
+        { "t": 0.3, "x": 288, "y": 250.8 },
+        { "t": 0.32, "x": 288, "y": 251 },
+        { "t": 0.34, "x": 288, "y": 251 },
+        { "t": 0.36, "x": 288, "y": 251.1 },
+        { "t": 0.38, "x": 288, "y": 251.1 },
+        { "t": 0.4, "x": 288, "y": 251.3 },
+        { "t": 0.42, "x": 288, "y": 251.3 },
+        { "t": 0.44, "x": 288, "y": 251.3 },
+        { "t": 0.46, "x": 288, "y": 251.4 },
+        { "t": 0.48, "x": 288, "y": 251.4 },
+        { "t": 0.5, "x": 288, "y": 251.5 },
+        { "t": 0.52, "x": 288, "y": 251.5 },
+        { "t": 0.54, "x": 288, "y": 251.7 },
+        { "t": 0.56, "x": 288, "y": 251.7 },
+        { "t": 0.58, "x": 288, "y": 251.7 },
+        { "t": 0.6, "x": 288, "y": 251.8 },
+        { "t": 0.62, "x": 288, "y": 251.8 },
+        { "t": 0.64, "x": 288, "y": 252 },
+        { "t": 0.66, "x": 288, "y": 252 },
+        { "t": 0.68, "x": 288, "y": 252.1 },
+        { "t": 0.7, "x": 288, "y": 252.1 },
+        { "t": 0.72, "x": 288, "y": 252.1 },
+        { "t": 0.74, "x": 288, "y": 252.2 },
+        { "t": 0.76, "x": 288, "y": 252.2 },
+        { "t": 0.78, "x": 288, "y": 252.4 },
+        { "t": 0.8, "x": 288, "y": 252.4 },
+        { "t": 0.82, "x": 288, "y": 252.5 },
+        { "t": 0.84, "x": 288, "y": 252.5 },
+        { "t": 0.86, "x": 288, "y": 252.5 },
+        { "t": 0.88, "x": 288, "y": 252.7 },
+        { "t": 0.9, "x": 288, "y": 252.7 },
+        { "t": 0.92, "x": 288, "y": 252.8 },
+        { "t": 0.94, "x": 288, "y": 252.8 },
+        { "t": 0.96, "x": 288, "y": 252.9 },
+        { "t": 0.98, "x": 288, "y": 252.9 },
+        { "t": 1, "x": 288, "y": 252.9 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 330, "y": 250 },
+        { "t": 0.04, "x": 330, "y": 250 },
+        { "t": 0.06, "x": 330, "y": 250 },
+        { "t": 0.08, "x": 330, "y": 250 },
+        { "t": 0.1, "x": 330, "y": 250 },
+        { "t": 0.12, "x": 330, "y": 250 },
+        { "t": 0.14, "x": 330, "y": 250 },
+        { "t": 0.16, "x": 330, "y": 250 },
+        { "t": 0.18, "x": 330, "y": 250 },
+        { "t": 0.2, "x": 330, "y": 250 },
+        { "t": 0.22, "x": 330, "y": 250 },
+        { "t": 0.24, "x": 330, "y": 250 },
+        { "t": 0.26, "x": 330, "y": 250 },
+        { "t": 0.28, "x": 330, "y": 250 },
+        { "t": 0.3, "x": 330, "y": 250 },
+        { "t": 0.32, "x": 330, "y": 250 },
+        { "t": 0.34, "x": 330, "y": 250 },
+        { "t": 0.36, "x": 330, "y": 250 },
+        { "t": 0.38, "x": 330, "y": 250 },
+        { "t": 0.4, "x": 330, "y": 250 },
+        { "t": 0.42, "x": 330, "y": 250 },
+        { "t": 0.44, "x": 330, "y": 250 },
+        { "t": 0.46, "x": 330, "y": 250 },
+        { "t": 0.48, "x": 330, "y": 250 },
+        { "t": 0.5, "x": 330, "y": 250 },
+        { "t": 0.52, "x": 330, "y": 250 },
+        { "t": 0.54, "x": 330, "y": 250 },
+        { "t": 0.56, "x": 330, "y": 250 },
+        { "t": 0.58, "x": 330, "y": 250 },
+        { "t": 0.6, "x": 330, "y": 250 },
+        { "t": 0.62, "x": 330, "y": 250 },
+        { "t": 0.64, "x": 330, "y": 250 },
+        { "t": 0.66, "x": 330, "y": 250 },
+        { "t": 0.68, "x": 330, "y": 250 },
+        { "t": 0.7, "x": 330, "y": 250 },
+        { "t": 0.72, "x": 330, "y": 250 },
+        { "t": 0.74, "x": 330, "y": 250 },
+        { "t": 0.76, "x": 330, "y": 250 },
+        { "t": 0.78, "x": 330, "y": 250 },
+        { "t": 0.8, "x": 330, "y": 250 },
+        { "t": 0.82, "x": 330, "y": 250 },
+        { "t": 0.84, "x": 330, "y": 250 },
+        { "t": 0.86, "x": 330, "y": 250 },
+        { "t": 0.88, "x": 330, "y": 250 },
+        { "t": 0.9, "x": 330, "y": 250 },
+        { "t": 0.92, "x": 330, "y": 250 },
+        { "t": 0.94, "x": 330, "y": 250 },
+        { "t": 0.96, "x": 330, "y": 250 },
+        { "t": 0.98, "x": 330, "y": 250 },
+        { "t": 1, "x": 330, "y": 250 }
+      ],
+      "WR": [
+        { "t": 0, "x": 330, "y": 116.7 },
+        { "t": 0.02, "x": 330, "y": 129.5 },
+        { "t": 0.04, "x": 330, "y": 142.3 },
+        { "t": 0.06, "x": 330, "y": 155.1 },
+        { "t": 0.08, "x": 330, "y": 168 },
+        { "t": 0.1, "x": 330, "y": 180.7 },
+        { "t": 0.12, "x": 330, "y": 193.6 },
+        { "t": 0.14, "x": 330, "y": 206.5 },
+        { "t": 0.16, "x": 330, "y": 219.2 },
+        { "t": 0.18, "x": 330, "y": 232.1 },
+        { "t": 0.2, "x": 330, "y": 244.8 },
+        { "t": 0.22, "x": 330, "y": 257.7 },
+        { "t": 0.24, "x": 330, "y": 270.4 },
+        { "t": 0.26, "x": 330, "y": 283.3 },
+        { "t": 0.28, "x": 330, "y": 296.2 },
+        { "t": 0.3, "x": 330, "y": 308.9 },
+        { "t": 0.32, "x": 330, "y": 321.8 },
+        { "t": 0.34, "x": 330, "y": 334.6 },
+        { "t": 0.36, "x": 331.7, "y": 345.5 },
+        { "t": 0.38, "x": 335.2, "y": 354.4 },
+        { "t": 0.4, "x": 338.7, "y": 363.3 },
+        { "t": 0.42, "x": 342, "y": 372.2 },
+        { "t": 0.44, "x": 345.5, "y": 381.2 },
+        { "t": 0.46, "x": 348.9, "y": 390.1 },
+        { "t": 0.48, "x": 352.4, "y": 399 },
+        { "t": 0.5, "x": 355.9, "y": 407.9 },
+        { "t": 0.52, "x": 359.3, "y": 416.9 },
+        { "t": 0.54, "x": 362.8, "y": 425.7 },
+        { "t": 0.56, "x": 370.9, "y": 427.9 },
+        { "t": 0.58, "x": 380.5, "y": 427.9 },
+        { "t": 0.6, "x": 390.2, "y": 427.9 },
+        { "t": 0.62, "x": 399.7, "y": 427.9 },
+        { "t": 0.64, "x": 409.4, "y": 427.9 },
+        { "t": 0.66, "x": 419, "y": 427.9 },
+        { "t": 0.68, "x": 428.7, "y": 427.9 },
+        { "t": 0.7, "x": 438.4, "y": 427.9 },
+        { "t": 0.72, "x": 449.6, "y": 427.9 },
+        { "t": 0.74, "x": 461.6, "y": 427.9 },
+        { "t": 0.76, "x": 473.6, "y": 427.9 },
+        { "t": 0.78, "x": 485.7, "y": 427.9 },
+        { "t": 0.8, "x": 497.7, "y": 427.9 },
+        { "t": 0.82, "x": 509.9, "y": 427.9 },
+        { "t": 0.84, "x": 521.9, "y": 427.9 },
+        { "t": 0.86, "x": 534, "y": 427.9 },
+        { "t": 0.88, "x": 545.3, "y": 427.9 },
+        { "t": 0.9, "x": 556.1, "y": 427.9 },
+        { "t": 0.92, "x": 566.9, "y": 427.9 },
+        { "t": 0.94, "x": 577.7, "y": 427.9 },
+        { "t": 0.96, "x": 588.4, "y": 427.9 },
+        { "t": 0.98, "x": 599.2, "y": 427.9 },
+        { "t": 1, "x": 610, "y": 427.9 }
+      ],
+      "RB_L": [
+        { "t": 0, "x": 225, "y": 187 },
+        { "t": 0.02, "x": 225, "y": 187 },
+        { "t": 0.04, "x": 225, "y": 187 },
+        { "t": 0.06, "x": 225, "y": 187 },
+        { "t": 0.08, "x": 225, "y": 187 },
+        { "t": 0.1, "x": 225, "y": 180.98 },
+        { "t": 0.12, "x": 225, "y": 174.82 },
+        { "t": 0.14, "x": 225, "y": 173.7 },
+        { "t": 0.16, "x": 225, "y": 172.58 },
+        { "t": 0.18, "x": 225, "y": 171.46 },
+        { "t": 0.2, "x": 225, "y": 170.34 },
+        { "t": 0.22, "x": 227.8, "y": 169.22 },
+        { "t": 0.24, "x": 230.6, "y": 168.1 },
+        { "t": 0.26, "x": 233.4, "y": 166.98 },
+        { "t": 0.28, "x": 236.2, "y": 165.86 },
+        { "t": 0.3, "x": 239, "y": 164.74 },
+        { "t": 0.32, "x": 241.8, "y": 163.62 },
+        { "t": 0.34, "x": 244.6, "y": 162.5 },
+        { "t": 0.36, "x": 247.4, "y": 161.38 },
+        { "t": 0.38, "x": 250.2, "y": 160.26 },
+        { "t": 0.4, "x": 253, "y": 159.14 },
+        { "t": 0.42, "x": 255.8, "y": 158.02 },
+        { "t": 0.44, "x": 258.6, "y": 156.9 },
+        { "t": 0.46, "x": 266.44, "y": 155.78 },
+        { "t": 0.48, "x": 274.28, "y": 154.66 },
+        { "t": 0.5, "x": 282.12, "y": 153.54 },
+        { "t": 0.52, "x": 289.96, "y": 152.42 },
+        { "t": 0.54, "x": 297.8, "y": 151.3 },
+        { "t": 0.56, "x": 305.64, "y": 150.18 },
+        { "t": 0.58, "x": 313.48, "y": 149.06 },
+        { "t": 0.6, "x": 321.32, "y": 147.94 },
+        { "t": 0.62, "x": 329.16, "y": 146.82 },
+        { "t": 0.64, "x": 337, "y": 145.7 },
+        { "t": 0.66, "x": 346.8, "y": 144.58 },
+        { "t": 0.68, "x": 356.6, "y": 143.46 },
+        { "t": 0.7, "x": 366.4, "y": 142.34 },
+        { "t": 0.72, "x": 376.2, "y": 141.22 },
+        { "t": 0.74, "x": 386, "y": 140.1 },
+        { "t": 0.76, "x": 395.8, "y": 138.98 },
+        { "t": 0.78, "x": 405.6, "y": 137.86 },
+        { "t": 0.8, "x": 415.4, "y": 136.74 },
+        { "t": 0.82, "x": 425.2, "y": 135.62 },
+        { "t": 0.84, "x": 435, "y": 134.5 },
+        { "t": 0.86, "x": 443.68, "y": 133.38 },
+        { "t": 0.88, "x": 452.5, "y": 132.26 },
+        { "t": 0.9, "x": 461.32, "y": 132.26 },
+        { "t": 0.92, "x": 470, "y": 132.26 },
+        { "t": 0.94, "x": 478.68, "y": 132.26 },
+        { "t": 0.96, "x": 487.5, "y": 132.26 },
+        { "t": 0.98, "x": 496.32, "y": 132.26 },
+        { "t": 1, "x": 505, "y": 132.26 }
+      ],
+      "RB_R": [
+        { "t": 0, "x": 225, "y": 313 },
+        { "t": 0.02, "x": 223.6, "y": 307.4 },
+        { "t": 0.04, "x": 222.2, "y": 301.8 },
+        { "t": 0.06, "x": 220.8, "y": 296.2 },
+        { "t": 0.08, "x": 219.4, "y": 290.6 },
+        { "t": 0.1, "x": 218, "y": 285 },
+        { "t": 0.12, "x": 216.6, "y": 279.4 },
+        { "t": 0.14, "x": 215.2, "y": 273.8 },
+        { "t": 0.16, "x": 213.8, "y": 268.2 },
+        { "t": 0.18, "x": 212.4, "y": 262.6 },
+        { "t": 0.2, "x": 211, "y": 257 },
+        { "t": 0.22, "x": 211, "y": 251.4 },
+        { "t": 0.24, "x": 211, "y": 245.8 },
+        { "t": 0.26, "x": 211, "y": 240.2 },
+        { "t": 0.28, "x": 211, "y": 234.6 },
+        { "t": 0.3, "x": 211, "y": 229 },
+        { "t": 0.32, "x": 211, "y": 223.4 },
+        { "t": 0.34, "x": 211, "y": 217.8 },
+        { "t": 0.36, "x": 211, "y": 212.2 },
+        { "t": 0.38, "x": 213.8, "y": 206.6 },
+        { "t": 0.4, "x": 216.6, "y": 201 },
+        { "t": 0.42, "x": 220.8, "y": 195.4 },
+        { "t": 0.44, "x": 225, "y": 189.8 },
+        { "t": 0.46, "x": 229.2, "y": 184.2 },
+        { "t": 0.48, "x": 233.4, "y": 178.6 },
+        { "t": 0.5, "x": 237.6, "y": 173 },
+        { "t": 0.52, "x": 241.8, "y": 167.4 },
+        { "t": 0.54, "x": 246, "y": 161.8 },
+        { "t": 0.56, "x": 250.2, "y": 156.2 },
+        { "t": 0.58, "x": 253, "y": 150.6 },
+        { "t": 0.6, "x": 255.8, "y": 145 },
+        { "t": 0.62, "x": 258.6, "y": 139.4 },
+        { "t": 0.64, "x": 266.44, "y": 133.8 },
+        { "t": 0.66, "x": 274.28, "y": 128.2 },
+        { "t": 0.68, "x": 282.12, "y": 122.6 },
+        { "t": 0.7, "x": 289.96, "y": 117 },
+        { "t": 0.72, "x": 297.8, "y": 111.4 },
+        { "t": 0.74, "x": 305.64, "y": 105.8 },
+        { "t": 0.76, "x": 313.48, "y": 100.2 },
+        { "t": 0.78, "x": 321.32, "y": 94.6 },
+        { "t": 0.8, "x": 329.16, "y": 89 },
+        { "t": 0.82, "x": 337, "y": 83.4 },
+        { "t": 0.84, "x": 346.8, "y": 77.8 },
+        { "t": 0.86, "x": 356.6, "y": 77.8 },
+        { "t": 0.88, "x": 366.4, "y": 77.8 },
+        { "t": 0.9, "x": 376.2, "y": 77.8 },
+        { "t": 0.92, "x": 386, "y": 77.8 },
+        { "t": 0.94, "x": 395.8, "y": 77.8 },
+        { "t": 0.96, "x": 405.6, "y": 77.8 },
+        { "t": 0.98, "x": 415.4, "y": 77.8 },
+        { "t": 1, "x": 425.2, "y": 77.8 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.2,
+        "label": "Motion \u2014 Handoff",
+        "target": "WR"
+      },
+      {
+        "t": 0.56,
+        "label": "Turns it upfield",
+        "target": "WR"
+      },
+      {
+        "t": 0.4,
+        "label": "RBs work away from the sweep",
+        "target": "RB_R"
+      }
+    ],
+    "throw": {
+      "t0": 0.18,
+      "t1": 0.23,
+      "from": "QB",
+      "to": "WR",
+      "type": "handoff"
+    }
+  },
+  "quickToss": {
+    "name": "Quick Toss",
+    "desc": "<b>Quick Toss.</b> Pro Set toss to RB (L). QB flips it out almost immediately at the snap &mdash; no mesh, no footwork &mdash; and RB (L) is already moving before he has it. Bounces it outside the numbers the same as Power, just delivered instantly instead of off a handoff.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 288, "y": 250 },
+        { "t": 0.04, "x": 288, "y": 250.1 },
+        { "t": 0.06, "x": 288, "y": 250.1 },
+        { "t": 0.08, "x": 288, "y": 250.3 },
+        { "t": 0.1, "x": 288, "y": 250.3 },
+        { "t": 0.12, "x": 288, "y": 250.4 },
+        { "t": 0.14, "x": 288, "y": 250.4 },
+        { "t": 0.16, "x": 288, "y": 250.4 },
+        { "t": 0.18, "x": 288, "y": 250.6 },
+        { "t": 0.2, "x": 288, "y": 250.6 },
+        { "t": 0.22, "x": 288, "y": 250.7 },
+        { "t": 0.24, "x": 288, "y": 250.7 },
+        { "t": 0.26, "x": 288, "y": 250.8 },
+        { "t": 0.28, "x": 288, "y": 250.8 },
+        { "t": 0.3, "x": 288, "y": 250.8 },
+        { "t": 0.32, "x": 288, "y": 251 },
+        { "t": 0.34, "x": 288, "y": 251 },
+        { "t": 0.36, "x": 288, "y": 251.1 },
+        { "t": 0.38, "x": 288, "y": 251.1 },
+        { "t": 0.4, "x": 288, "y": 251.3 },
+        { "t": 0.42, "x": 288, "y": 251.3 },
+        { "t": 0.44, "x": 288, "y": 251.3 },
+        { "t": 0.46, "x": 288, "y": 251.4 },
+        { "t": 0.48, "x": 288, "y": 251.4 },
+        { "t": 0.5, "x": 288, "y": 251.5 },
+        { "t": 0.52, "x": 288, "y": 251.5 },
+        { "t": 0.54, "x": 288, "y": 251.7 },
+        { "t": 0.56, "x": 288, "y": 251.7 },
+        { "t": 0.58, "x": 288, "y": 251.7 },
+        { "t": 0.6, "x": 288, "y": 251.8 },
+        { "t": 0.62, "x": 288, "y": 251.8 },
+        { "t": 0.64, "x": 288, "y": 252 },
+        { "t": 0.66, "x": 288, "y": 252 },
+        { "t": 0.68, "x": 288, "y": 252.1 },
+        { "t": 0.7, "x": 288, "y": 252.1 },
+        { "t": 0.72, "x": 288, "y": 252.1 },
+        { "t": 0.74, "x": 288, "y": 252.2 },
+        { "t": 0.76, "x": 288, "y": 252.2 },
+        { "t": 0.78, "x": 288, "y": 252.4 },
+        { "t": 0.8, "x": 288, "y": 252.4 },
+        { "t": 0.82, "x": 288, "y": 252.5 },
+        { "t": 0.84, "x": 288, "y": 252.5 },
+        { "t": 0.86, "x": 288, "y": 252.5 },
+        { "t": 0.88, "x": 288, "y": 252.7 },
+        { "t": 0.9, "x": 288, "y": 252.7 },
+        { "t": 0.92, "x": 288, "y": 252.8 },
+        { "t": 0.94, "x": 288, "y": 252.8 },
+        { "t": 0.96, "x": 288, "y": 252.9 },
+        { "t": 0.98, "x": 288, "y": 252.9 },
+        { "t": 1, "x": 288, "y": 252.9 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 330, "y": 250 },
+        { "t": 0.04, "x": 330, "y": 250 },
+        { "t": 0.06, "x": 330, "y": 250 },
+        { "t": 0.08, "x": 330, "y": 250 },
+        { "t": 0.1, "x": 330, "y": 250 },
+        { "t": 0.12, "x": 330, "y": 250 },
+        { "t": 0.14, "x": 330, "y": 250 },
+        { "t": 0.16, "x": 330, "y": 250 },
+        { "t": 0.18, "x": 330, "y": 250 },
+        { "t": 0.2, "x": 330, "y": 250 },
+        { "t": 0.22, "x": 330, "y": 250 },
+        { "t": 0.24, "x": 330, "y": 250 },
+        { "t": 0.26, "x": 330, "y": 250 },
+        { "t": 0.28, "x": 330, "y": 250 },
+        { "t": 0.3, "x": 330, "y": 250 },
+        { "t": 0.32, "x": 330, "y": 250 },
+        { "t": 0.34, "x": 330, "y": 250 },
+        { "t": 0.36, "x": 330, "y": 250 },
+        { "t": 0.38, "x": 330, "y": 250 },
+        { "t": 0.4, "x": 330, "y": 250 },
+        { "t": 0.42, "x": 330, "y": 250 },
+        { "t": 0.44, "x": 330, "y": 250 },
+        { "t": 0.46, "x": 330, "y": 250 },
+        { "t": 0.48, "x": 330, "y": 250 },
+        { "t": 0.5, "x": 330, "y": 250 },
+        { "t": 0.52, "x": 330, "y": 250 },
+        { "t": 0.54, "x": 330, "y": 250 },
+        { "t": 0.56, "x": 330, "y": 250 },
+        { "t": 0.58, "x": 330, "y": 250 },
+        { "t": 0.6, "x": 330, "y": 250 },
+        { "t": 0.62, "x": 330, "y": 250 },
+        { "t": 0.64, "x": 330, "y": 250 },
+        { "t": 0.66, "x": 330, "y": 250 },
+        { "t": 0.68, "x": 330, "y": 250 },
+        { "t": 0.7, "x": 330, "y": 250 },
+        { "t": 0.72, "x": 330, "y": 250 },
+        { "t": 0.74, "x": 330, "y": 250 },
+        { "t": 0.76, "x": 330, "y": 250 },
+        { "t": 0.78, "x": 330, "y": 250 },
+        { "t": 0.8, "x": 330, "y": 250 },
+        { "t": 0.82, "x": 330, "y": 250 },
+        { "t": 0.84, "x": 330, "y": 250 },
+        { "t": 0.86, "x": 330, "y": 250 },
+        { "t": 0.88, "x": 330, "y": 250 },
+        { "t": 0.9, "x": 330, "y": 250 },
+        { "t": 0.92, "x": 330, "y": 250 },
+        { "t": 0.94, "x": 330, "y": 250 },
+        { "t": 0.96, "x": 330, "y": 250 },
+        { "t": 0.98, "x": 330, "y": 250 },
+        { "t": 1, "x": 330, "y": 250 }
+      ],
+      "WR": [
+        { "t": 0, "x": 330, "y": 116.7 },
+        { "t": 0.02, "x": 337.6, "y": 116.7 },
+        { "t": 0.04, "x": 345.1, "y": 116.7 },
+        { "t": 0.06, "x": 352.7, "y": 116.7 },
+        { "t": 0.08, "x": 360.2, "y": 116.7 },
+        { "t": 0.1, "x": 367.8, "y": 116.7 },
+        { "t": 0.12, "x": 375.4, "y": 116.7 },
+        { "t": 0.14, "x": 382.9, "y": 116.7 },
+        { "t": 0.16, "x": 390.5, "y": 116.7 },
+        { "t": 0.18, "x": 398, "y": 116.7 },
+        { "t": 0.2, "x": 405.6, "y": 116.7 },
+        { "t": 0.22, "x": 413.2, "y": 116.7 },
+        { "t": 0.24, "x": 420.7, "y": 116.7 },
+        { "t": 0.26, "x": 428.3, "y": 116.7 },
+        { "t": 0.28, "x": 435.8, "y": 116.7 },
+        { "t": 0.3, "x": 443.4, "y": 116.7 },
+        { "t": 0.32, "x": 451, "y": 116.7 },
+        { "t": 0.34, "x": 458.5, "y": 116.7 },
+        { "t": 0.36, "x": 466.1, "y": 116.7 },
+        { "t": 0.38, "x": 473.6, "y": 116.7 },
+        { "t": 0.4, "x": 481.2, "y": 116.7 },
+        { "t": 0.42, "x": 488.8, "y": 116.7 },
+        { "t": 0.44, "x": 496.3, "y": 116.7 },
+        { "t": 0.46, "x": 503.9, "y": 116.7 },
+        { "t": 0.48, "x": 511.4, "y": 116.7 },
+        { "t": 0.5, "x": 519, "y": 116.7 },
+        { "t": 0.52, "x": 526.6, "y": 116.7 },
+        { "t": 0.54, "x": 534.1, "y": 116.7 },
+        { "t": 0.56, "x": 541.7, "y": 116.7 },
+        { "t": 0.58, "x": 549.2, "y": 116.7 },
+        { "t": 0.6, "x": 556.8, "y": 116.7 },
+        { "t": 0.62, "x": 564.4, "y": 116.7 },
+        { "t": 0.64, "x": 571.9, "y": 116.7 },
+        { "t": 0.66, "x": 579.5, "y": 116.7 },
+        { "t": 0.68, "x": 587, "y": 116.7 },
+        { "t": 0.7, "x": 594.6, "y": 116.7 },
+        { "t": 0.72, "x": 602.2, "y": 116.7 },
+        { "t": 0.74, "x": 609.7, "y": 116.7 },
+        { "t": 0.76, "x": 617.3, "y": 116.7 },
+        { "t": 0.78, "x": 624.8, "y": 116.7 },
+        { "t": 0.8, "x": 632.4, "y": 116.7 },
+        { "t": 0.82, "x": 640, "y": 116.7 },
+        { "t": 0.84, "x": 647.5, "y": 116.7 },
+        { "t": 0.86, "x": 655.1, "y": 116.7 },
+        { "t": 0.88, "x": 662.6, "y": 116.7 },
+        { "t": 0.9, "x": 670.2, "y": 116.7 },
+        { "t": 0.92, "x": 677.8, "y": 116.7 },
+        { "t": 0.94, "x": 685.3, "y": 116.7 },
+        { "t": 0.96, "x": 692.9, "y": 116.7 },
+        { "t": 0.98, "x": 700.4, "y": 116.7 },
+        { "t": 1, "x": 708, "y": 116.7 }
+      ],
+      "RB_L": [
+        { "t": 0, "x": 225, "y": 187 },
+        { "t": 0.02, "x": 223.6, "y": 192.6 },
+        { "t": 0.04, "x": 222.2, "y": 198.2 },
+        { "t": 0.06, "x": 220.8, "y": 203.8 },
+        { "t": 0.08, "x": 219.4, "y": 209.4 },
+        { "t": 0.1, "x": 218, "y": 215 },
+        { "t": 0.12, "x": 216.6, "y": 220.6 },
+        { "t": 0.14, "x": 215.2, "y": 226.2 },
+        { "t": 0.16, "x": 213.8, "y": 231.8 },
+        { "t": 0.18, "x": 212.4, "y": 237.4 },
+        { "t": 0.2, "x": 211, "y": 243 },
+        { "t": 0.22, "x": 211, "y": 248.6 },
+        { "t": 0.24, "x": 211, "y": 254.2 },
+        { "t": 0.26, "x": 211, "y": 259.8 },
+        { "t": 0.28, "x": 211, "y": 265.4 },
+        { "t": 0.3, "x": 211, "y": 271 },
+        { "t": 0.32, "x": 211, "y": 276.6 },
+        { "t": 0.34, "x": 211, "y": 282.2 },
+        { "t": 0.36, "x": 211, "y": 287.8 },
+        { "t": 0.38, "x": 213.8, "y": 293.4 },
+        { "t": 0.4, "x": 216.6, "y": 299 },
+        { "t": 0.42, "x": 220.8, "y": 304.6 },
+        { "t": 0.44, "x": 225, "y": 310.2 },
+        { "t": 0.46, "x": 229.2, "y": 315.8 },
+        { "t": 0.48, "x": 233.4, "y": 321.4 },
+        { "t": 0.5, "x": 237.6, "y": 327 },
+        { "t": 0.52, "x": 241.8, "y": 332.6 },
+        { "t": 0.54, "x": 246, "y": 338.2 },
+        { "t": 0.56, "x": 250.2, "y": 343.8 },
+        { "t": 0.58, "x": 253, "y": 349.4 },
+        { "t": 0.6, "x": 255.8, "y": 355 },
+        { "t": 0.62, "x": 258.6, "y": 360.6 },
+        { "t": 0.64, "x": 266.44, "y": 366.2 },
+        { "t": 0.66, "x": 274.28, "y": 371.8 },
+        { "t": 0.68, "x": 282.12, "y": 377.4 },
+        { "t": 0.7, "x": 289.96, "y": 383 },
+        { "t": 0.72, "x": 297.8, "y": 388.6 },
+        { "t": 0.74, "x": 305.64, "y": 394.2 },
+        { "t": 0.76, "x": 313.48, "y": 399.8 },
+        { "t": 0.78, "x": 321.32, "y": 405.4 },
+        { "t": 0.8, "x": 329.16, "y": 411 },
+        { "t": 0.82, "x": 337, "y": 416.6 },
+        { "t": 0.84, "x": 346.8, "y": 422.2 },
+        { "t": 0.86, "x": 356.6, "y": 422.2 },
+        { "t": 0.88, "x": 366.4, "y": 422.2 },
+        { "t": 0.9, "x": 376.2, "y": 422.2 },
+        { "t": 0.92, "x": 386, "y": 422.2 },
+        { "t": 0.94, "x": 395.8, "y": 422.2 },
+        { "t": 0.96, "x": 405.6, "y": 422.2 },
+        { "t": 0.98, "x": 415.4, "y": 422.2 },
+        { "t": 1, "x": 425.2, "y": 422.2 }
+      ],
+      "RB_R": [
+        { "t": 0, "x": 225, "y": 313 },
+        { "t": 0.02, "x": 225, "y": 313 },
+        { "t": 0.04, "x": 225, "y": 313 },
+        { "t": 0.06, "x": 225, "y": 313 },
+        { "t": 0.08, "x": 225, "y": 313 },
+        { "t": 0.1, "x": 227.8, "y": 319.02 },
+        { "t": 0.12, "x": 230.6, "y": 325.18 },
+        { "t": 0.14, "x": 233.4, "y": 326.3 },
+        { "t": 0.16, "x": 236.2, "y": 327.42 },
+        { "t": 0.18, "x": 239, "y": 328.54 },
+        { "t": 0.2, "x": 241.8, "y": 329.66 },
+        { "t": 0.22, "x": 244.6, "y": 330.78 },
+        { "t": 0.24, "x": 247.4, "y": 331.9 },
+        { "t": 0.26, "x": 250.2, "y": 333.02 },
+        { "t": 0.28, "x": 253, "y": 334.14 },
+        { "t": 0.3, "x": 255.8, "y": 335.26 },
+        { "t": 0.32, "x": 258.6, "y": 336.38 },
+        { "t": 0.34, "x": 266.44, "y": 337.5 },
+        { "t": 0.36, "x": 274.28, "y": 338.62 },
+        { "t": 0.38, "x": 282.12, "y": 339.74 },
+        { "t": 0.4, "x": 289.96, "y": 340.86 },
+        { "t": 0.42, "x": 297.8, "y": 341.98 },
+        { "t": 0.44, "x": 305.64, "y": 343.1 },
+        { "t": 0.46, "x": 313.48, "y": 344.22 },
+        { "t": 0.48, "x": 321.32, "y": 345.34 },
+        { "t": 0.5, "x": 329.16, "y": 346.46 },
+        { "t": 0.52, "x": 337, "y": 347.58 },
+        { "t": 0.54, "x": 346.8, "y": 348.7 },
+        { "t": 0.56, "x": 356.6, "y": 349.82 },
+        { "t": 0.58, "x": 366.4, "y": 350.94 },
+        { "t": 0.6, "x": 376.2, "y": 352.06 },
+        { "t": 0.62, "x": 386, "y": 353.18 },
+        { "t": 0.64, "x": 395.8, "y": 354.3 },
+        { "t": 0.66, "x": 405.6, "y": 355.42 },
+        { "t": 0.68, "x": 415.4, "y": 356.54 },
+        { "t": 0.7, "x": 425.2, "y": 357.66 },
+        { "t": 0.72, "x": 435, "y": 358.78 },
+        { "t": 0.74, "x": 443.68, "y": 359.9 },
+        { "t": 0.76, "x": 452.5, "y": 361.02 },
+        { "t": 0.78, "x": 461.32, "y": 362.14 },
+        { "t": 0.8, "x": 470, "y": 363.26 },
+        { "t": 0.82, "x": 478.68, "y": 364.38 },
+        { "t": 0.84, "x": 487.5, "y": 365.5 },
+        { "t": 0.86, "x": 496.32, "y": 366.62 },
+        { "t": 0.88, "x": 505, "y": 367.74 },
+        { "t": 0.9, "x": 505, "y": 367.74 },
+        { "t": 0.92, "x": 505, "y": 367.74 },
+        { "t": 0.94, "x": 505, "y": 367.74 },
+        { "t": 0.96, "x": 505, "y": 367.74 },
+        { "t": 0.98, "x": 505, "y": 367.74 },
+        { "t": 1, "x": 505, "y": 367.74 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.04,
+        "label": "Quick pitch",
+        "target": "RB_L"
+      },
+      {
+        "t": 0.4,
+        "label": "Turns it upfield",
+        "target": "RB_L"
+      }
+    ],
+    "throw": {
+      "t0": 0.02,
+      "t1": 0.08,
+      "from": "QB",
+      "to": "RB_L",
+      "type": "toss"
+    }
+  },
+  "drawDelay": {
+    "name": "Draw Delay",
+    "desc": "<b>Draw Delay.</b> Single Back draw. QB drops back and holds like a pass &mdash; X, Y, and C all release vertically to sell it &mdash; while RB, set 10 yards deep, stays put. After a long hold, RB takes the delayed give and hits it straight up the middle.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 283.7, "y": 250 },
+        { "t": 0.04, "x": 279.2, "y": 250 },
+        { "t": 0.06, "x": 274.8, "y": 250 },
+        { "t": 0.08, "x": 270.4, "y": 250 },
+        { "t": 0.1, "x": 266, "y": 250 },
+        { "t": 0.12, "x": 261.5, "y": 250 },
+        { "t": 0.14, "x": 257.2, "y": 250 },
+        { "t": 0.16, "x": 252.9, "y": 250 },
+        { "t": 0.18, "x": 248.4, "y": 250 },
+        { "t": 0.2, "x": 244, "y": 250 },
+        { "t": 0.22, "x": 239.6, "y": 250 },
+        { "t": 0.24, "x": 235.2, "y": 250 },
+        { "t": 0.26, "x": 230.7, "y": 250 },
+        { "t": 0.28, "x": 226.4, "y": 250 },
+        { "t": 0.3, "x": 222.1, "y": 250 },
+        { "t": 0.32, "x": 217.6, "y": 250 },
+        { "t": 0.34, "x": 213.2, "y": 250 },
+        { "t": 0.36, "x": 211, "y": 250 },
+        { "t": 0.38, "x": 211, "y": 250 },
+        { "t": 0.4, "x": 211, "y": 250 },
+        { "t": 0.42, "x": 211, "y": 250 },
+        { "t": 0.44, "x": 211, "y": 250 },
+        { "t": 0.46, "x": 211, "y": 250 },
+        { "t": 0.48, "x": 211, "y": 250 },
+        { "t": 0.5, "x": 211, "y": 250 },
+        { "t": 0.52, "x": 211, "y": 250 },
+        { "t": 0.54, "x": 211, "y": 250 },
+        { "t": 0.56, "x": 211, "y": 250 },
+        { "t": 0.58, "x": 211, "y": 250 },
+        { "t": 0.6, "x": 211, "y": 250 },
+        { "t": 0.62, "x": 211, "y": 250 },
+        { "t": 0.64, "x": 211, "y": 250 },
+        { "t": 0.66, "x": 209.6, "y": 250.6 },
+        { "t": 0.68, "x": 206.8, "y": 251.8 },
+        { "t": 0.7, "x": 204, "y": 252.9 },
+        { "t": 0.72, "x": 203.9, "y": 253.1 },
+        { "t": 0.74, "x": 203.6, "y": 253.2 },
+        { "t": 0.76, "x": 203.4, "y": 253.4 },
+        { "t": 0.78, "x": 203.3, "y": 253.5 },
+        { "t": 0.8, "x": 203, "y": 253.6 },
+        { "t": 0.82, "x": 202.9, "y": 253.8 },
+        { "t": 0.84, "x": 202.7, "y": 253.9 },
+        { "t": 0.86, "x": 202.5, "y": 254.1 },
+        { "t": 0.88, "x": 202.3, "y": 254.2 },
+        { "t": 0.9, "x": 202.2, "y": 254.3 },
+        { "t": 0.92, "x": 201.9, "y": 254.5 },
+        { "t": 0.94, "x": 201.8, "y": 254.6 },
+        { "t": 0.96, "x": 201.6, "y": 254.8 },
+        { "t": 0.98, "x": 201.3, "y": 254.9 },
+        { "t": 1, "x": 201.2, "y": 255 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 337.6, "y": 250.4 },
+        { "t": 0.04, "x": 345.1, "y": 250.8 },
+        { "t": 0.06, "x": 352.7, "y": 251.3 },
+        { "t": 0.08, "x": 360.2, "y": 251.5 },
+        { "t": 0.1, "x": 367.8, "y": 252 },
+        { "t": 0.12, "x": 375.4, "y": 252.4 },
+        { "t": 0.14, "x": 382.9, "y": 252.8 },
+        { "t": 0.16, "x": 390.5, "y": 253.2 },
+        { "t": 0.18, "x": 398, "y": 253.6 },
+        { "t": 0.2, "x": 405.6, "y": 254.1 },
+        { "t": 0.22, "x": 413.2, "y": 254.3 },
+        { "t": 0.24, "x": 420.7, "y": 254.8 },
+        { "t": 0.26, "x": 428.3, "y": 255.2 },
+        { "t": 0.28, "x": 435.8, "y": 255.6 },
+        { "t": 0.3, "x": 443.4, "y": 256 },
+        { "t": 0.32, "x": 451, "y": 256.4 },
+        { "t": 0.34, "x": 458.5, "y": 256.9 },
+        { "t": 0.36, "x": 466.1, "y": 257.1 },
+        { "t": 0.38, "x": 473.6, "y": 257.6 },
+        { "t": 0.4, "x": 481.2, "y": 258 },
+        { "t": 0.42, "x": 488.8, "y": 258.4 },
+        { "t": 0.44, "x": 496.3, "y": 258.8 },
+        { "t": 0.46, "x": 503.9, "y": 259.2 },
+        { "t": 0.48, "x": 511.4, "y": 259.7 },
+        { "t": 0.5, "x": 519, "y": 259.9 },
+        { "t": 0.52, "x": 526.6, "y": 260.4 },
+        { "t": 0.54, "x": 534.1, "y": 260.8 },
+        { "t": 0.56, "x": 541.7, "y": 261.2 },
+        { "t": 0.58, "x": 549.2, "y": 261.6 },
+        { "t": 0.6, "x": 556.8, "y": 262 },
+        { "t": 0.62, "x": 564.4, "y": 262.5 },
+        { "t": 0.64, "x": 571.9, "y": 262.7 },
+        { "t": 0.66, "x": 579.5, "y": 263.2 },
+        { "t": 0.68, "x": 587, "y": 263.6 },
+        { "t": 0.7, "x": 594.6, "y": 264 },
+        { "t": 0.72, "x": 602.2, "y": 264.4 },
+        { "t": 0.74, "x": 609.7, "y": 264.8 },
+        { "t": 0.76, "x": 617.3, "y": 265.3 },
+        { "t": 0.78, "x": 624.8, "y": 265.5 },
+        { "t": 0.8, "x": 632.4, "y": 266 },
+        { "t": 0.82, "x": 640, "y": 266.4 },
+        { "t": 0.84, "x": 647.5, "y": 266.8 },
+        { "t": 0.86, "x": 655.1, "y": 267.2 },
+        { "t": 0.88, "x": 662.6, "y": 267.6 },
+        { "t": 0.9, "x": 670.2, "y": 268.1 },
+        { "t": 0.92, "x": 677.8, "y": 268.3 },
+        { "t": 0.94, "x": 685.3, "y": 268.8 },
+        { "t": 0.96, "x": 692.9, "y": 269.2 },
+        { "t": 0.98, "x": 700.4, "y": 269.6 },
+        { "t": 1, "x": 708, "y": 270 }
+      ],
+      "WR_L": [
+        { "t": 0, "x": 330, "y": 110 },
+        { "t": 0.02, "x": 337.6, "y": 109.6 },
+        { "t": 0.04, "x": 345.1, "y": 109.2 },
+        { "t": 0.06, "x": 352.7, "y": 108.7 },
+        { "t": 0.08, "x": 360.2, "y": 108.5 },
+        { "t": 0.1, "x": 367.8, "y": 108 },
+        { "t": 0.12, "x": 375.4, "y": 107.6 },
+        { "t": 0.14, "x": 382.9, "y": 107.2 },
+        { "t": 0.16, "x": 390.5, "y": 106.8 },
+        { "t": 0.18, "x": 398, "y": 106.4 },
+        { "t": 0.2, "x": 405.6, "y": 105.9 },
+        { "t": 0.22, "x": 413.2, "y": 105.7 },
+        { "t": 0.24, "x": 420.7, "y": 105.2 },
+        { "t": 0.26, "x": 428.3, "y": 104.8 },
+        { "t": 0.28, "x": 435.8, "y": 104.4 },
+        { "t": 0.3, "x": 443.4, "y": 104 },
+        { "t": 0.32, "x": 451, "y": 103.6 },
+        { "t": 0.34, "x": 458.5, "y": 103.1 },
+        { "t": 0.36, "x": 466.1, "y": 102.9 },
+        { "t": 0.38, "x": 473.6, "y": 102.4 },
+        { "t": 0.4, "x": 481.2, "y": 102 },
+        { "t": 0.42, "x": 488.8, "y": 101.6 },
+        { "t": 0.44, "x": 496.3, "y": 101.2 },
+        { "t": 0.46, "x": 503.9, "y": 100.8 },
+        { "t": 0.48, "x": 511.4, "y": 100.3 },
+        { "t": 0.5, "x": 519, "y": 100.1 },
+        { "t": 0.52, "x": 526.6, "y": 99.6 },
+        { "t": 0.54, "x": 534.1, "y": 99.2 },
+        { "t": 0.56, "x": 541.7, "y": 98.8 },
+        { "t": 0.58, "x": 549.2, "y": 98.4 },
+        { "t": 0.6, "x": 556.8, "y": 98 },
+        { "t": 0.62, "x": 564.4, "y": 97.5 },
+        { "t": 0.64, "x": 571.9, "y": 97.3 },
+        { "t": 0.66, "x": 579.5, "y": 96.8 },
+        { "t": 0.68, "x": 587, "y": 96.4 },
+        { "t": 0.7, "x": 594.6, "y": 96 },
+        { "t": 0.72, "x": 602.2, "y": 95.6 },
+        { "t": 0.74, "x": 609.7, "y": 95.2 },
+        { "t": 0.76, "x": 617.3, "y": 94.7 },
+        { "t": 0.78, "x": 624.8, "y": 94.5 },
+        { "t": 0.8, "x": 632.4, "y": 94 },
+        { "t": 0.82, "x": 640, "y": 93.6 },
+        { "t": 0.84, "x": 647.5, "y": 93.2 },
+        { "t": 0.86, "x": 655.1, "y": 92.8 },
+        { "t": 0.88, "x": 662.6, "y": 92.4 },
+        { "t": 0.9, "x": 670.2, "y": 91.9 },
+        { "t": 0.92, "x": 677.8, "y": 91.7 },
+        { "t": 0.94, "x": 685.3, "y": 91.2 },
+        { "t": 0.96, "x": 692.9, "y": 90.8 },
+        { "t": 0.98, "x": 700.4, "y": 90.4 },
+        { "t": 1, "x": 708, "y": 90 }
+      ],
+      "WR_R": [
+        { "t": 0, "x": 330, "y": 399.9 },
+        { "t": 0.02, "x": 337.6, "y": 399.7 },
+        { "t": 0.04, "x": 345.1, "y": 399.2 },
+        { "t": 0.06, "x": 352.7, "y": 398.8 },
+        { "t": 0.08, "x": 360.2, "y": 398.4 },
+        { "t": 0.1, "x": 367.8, "y": 398 },
+        { "t": 0.12, "x": 375.4, "y": 397.6 },
+        { "t": 0.14, "x": 382.9, "y": 397.1 },
+        { "t": 0.16, "x": 390.5, "y": 396.9 },
+        { "t": 0.18, "x": 398, "y": 396.4 },
+        { "t": 0.2, "x": 405.6, "y": 396 },
+        { "t": 0.22, "x": 413.2, "y": 395.6 },
+        { "t": 0.24, "x": 420.7, "y": 395.2 },
+        { "t": 0.26, "x": 428.3, "y": 394.8 },
+        { "t": 0.28, "x": 435.8, "y": 394.3 },
+        { "t": 0.3, "x": 443.4, "y": 394.1 },
+        { "t": 0.32, "x": 451, "y": 393.6 },
+        { "t": 0.34, "x": 458.5, "y": 393.2 },
+        { "t": 0.36, "x": 466.1, "y": 392.8 },
+        { "t": 0.38, "x": 473.6, "y": 392.4 },
+        { "t": 0.4, "x": 481.2, "y": 392 },
+        { "t": 0.42, "x": 488.8, "y": 391.5 },
+        { "t": 0.44, "x": 496.3, "y": 391.3 },
+        { "t": 0.46, "x": 503.9, "y": 390.8 },
+        { "t": 0.48, "x": 511.4, "y": 390.4 },
+        { "t": 0.5, "x": 519, "y": 390 },
+        { "t": 0.52, "x": 526.6, "y": 389.6 },
+        { "t": 0.54, "x": 534.1, "y": 389.2 },
+        { "t": 0.56, "x": 541.7, "y": 388.7 },
+        { "t": 0.58, "x": 549.2, "y": 388.5 },
+        { "t": 0.6, "x": 556.8, "y": 388 },
+        { "t": 0.62, "x": 564.4, "y": 387.6 },
+        { "t": 0.64, "x": 571.9, "y": 387.2 },
+        { "t": 0.66, "x": 579.5, "y": 386.8 },
+        { "t": 0.68, "x": 587, "y": 386.4 },
+        { "t": 0.7, "x": 594.6, "y": 385.9 },
+        { "t": 0.72, "x": 602.2, "y": 385.7 },
+        { "t": 0.74, "x": 609.7, "y": 385.2 },
+        { "t": 0.76, "x": 617.3, "y": 384.8 },
+        { "t": 0.78, "x": 624.8, "y": 384.4 },
+        { "t": 0.8, "x": 632.4, "y": 384 },
+        { "t": 0.82, "x": 640, "y": 383.6 },
+        { "t": 0.84, "x": 647.5, "y": 383.1 },
+        { "t": 0.86, "x": 655.1, "y": 382.9 },
+        { "t": 0.88, "x": 662.6, "y": 382.4 },
+        { "t": 0.9, "x": 670.2, "y": 382 },
+        { "t": 0.92, "x": 677.8, "y": 381.6 },
+        { "t": 0.94, "x": 685.3, "y": 381.2 },
+        { "t": 0.96, "x": 692.9, "y": 380.8 },
+        { "t": 0.98, "x": 700.4, "y": 380.3 },
+        { "t": 1, "x": 708, "y": 380.1 }
+      ],
+      "RB": [
+        { "t": 0, "x": 190, "y": 250 },
+        { "t": 0.02, "x": 190, "y": 250 },
+        { "t": 0.04, "x": 190, "y": 250 },
+        { "t": 0.06, "x": 190, "y": 250 },
+        { "t": 0.08, "x": 190, "y": 250 },
+        { "t": 0.1, "x": 190, "y": 250 },
+        { "t": 0.12, "x": 190, "y": 250 },
+        { "t": 0.14, "x": 190, "y": 250 },
+        { "t": 0.16, "x": 190, "y": 250 },
+        { "t": 0.18, "x": 190, "y": 250 },
+        { "t": 0.2, "x": 190, "y": 250 },
+        { "t": 0.22, "x": 190, "y": 250 },
+        { "t": 0.24, "x": 190, "y": 250 },
+        { "t": 0.26, "x": 190, "y": 250 },
+        { "t": 0.28, "x": 190, "y": 250 },
+        { "t": 0.3, "x": 190, "y": 250 },
+        { "t": 0.32, "x": 190, "y": 250 },
+        { "t": 0.34, "x": 190, "y": 250 },
+        { "t": 0.36, "x": 190, "y": 250 },
+        { "t": 0.38, "x": 190, "y": 250 },
+        { "t": 0.4, "x": 190, "y": 250 },
+        { "t": 0.42, "x": 190, "y": 250 },
+        { "t": 0.44, "x": 190, "y": 250 },
+        { "t": 0.46, "x": 190, "y": 250 },
+        { "t": 0.48, "x": 190, "y": 250 },
+        { "t": 0.5, "x": 190, "y": 250 },
+        { "t": 0.52, "x": 190, "y": 250 },
+        { "t": 0.54, "x": 190, "y": 250 },
+        { "t": 0.56, "x": 190, "y": 250 },
+        { "t": 0.58, "x": 190, "y": 250 },
+        { "t": 0.6, "x": 190, "y": 250 },
+        { "t": 0.62, "x": 190, "y": 250 },
+        { "t": 0.64, "x": 190, "y": 250 },
+        { "t": 0.66, "x": 192.2, "y": 250 },
+        { "t": 0.68, "x": 196.7, "y": 250 },
+        { "t": 0.7, "x": 201.2, "y": 250 },
+        { "t": 0.72, "x": 227.4, "y": 250 },
+        { "t": 0.74, "x": 253.4, "y": 250 },
+        { "t": 0.76, "x": 279.6, "y": 250 },
+        { "t": 0.78, "x": 305.8, "y": 250 },
+        { "t": 0.8, "x": 331.8, "y": 250 },
+        { "t": 0.82, "x": 358, "y": 250 },
+        { "t": 0.84, "x": 384.2, "y": 250 },
+        { "t": 0.86, "x": 410.6, "y": 250 },
+        { "t": 0.88, "x": 437.5, "y": 250 },
+        { "t": 0.9, "x": 464.4, "y": 250 },
+        { "t": 0.92, "x": 491.3, "y": 250 },
+        { "t": 0.94, "x": 518.2, "y": 250 },
+        { "t": 0.96, "x": 545, "y": 250 },
+        { "t": 0.98, "x": 571.9, "y": 250 },
+        { "t": 1, "x": 598.8, "y": 250 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.05,
+        "label": "QB drops, sells the pass",
+        "target": "QB"
+      },
+      {
+        "t": 0.65,
+        "label": "Delayed give",
+        "target": "RB"
+      },
+      {
+        "t": 0.82,
+        "label": "Downhill through the middle",
+        "target": "RB"
+      }
+    ],
+    "throw": {
+      "t0": 0.64,
+      "t1": 0.7,
+      "from": "QB",
+      "to": "RB",
+      "type": "handoff"
+    }
+  },
+  "crissCross": {
+    "name": "Criss Cross",
+    "desc": "<b>Criss Cross.</b> Single Back play-action pass. X and Y cross underneath while the QB holds in the pocket after his drop. C releases late and sneaks out to the flat &mdash; after the long delay, QB checks down and finds him for the completion.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 283.5, "y": 250 },
+        { "t": 0.04, "x": 279, "y": 250 },
+        { "t": 0.06, "x": 274.6, "y": 250 },
+        { "t": 0.08, "x": 270.1, "y": 250 },
+        { "t": 0.1, "x": 265.6, "y": 250 },
+        { "t": 0.12, "x": 261.1, "y": 250 },
+        { "t": 0.14, "x": 256.6, "y": 250 },
+        { "t": 0.16, "x": 252.2, "y": 250 },
+        { "t": 0.18, "x": 247.7, "y": 250 },
+        { "t": 0.2, "x": 243.2, "y": 250 },
+        { "t": 0.22, "x": 238.7, "y": 250 },
+        { "t": 0.24, "x": 234.2, "y": 250 },
+        { "t": 0.26, "x": 232, "y": 250 },
+        { "t": 0.28, "x": 231.9, "y": 250.1 },
+        { "t": 0.3, "x": 231.7, "y": 250.1 },
+        { "t": 0.32, "x": 231.6, "y": 250.3 },
+        { "t": 0.34, "x": 231.4, "y": 250.4 },
+        { "t": 0.36, "x": 231.4, "y": 250.4 },
+        { "t": 0.38, "x": 231.3, "y": 250.6 },
+        { "t": 0.4, "x": 231.2, "y": 250.6 },
+        { "t": 0.42, "x": 231, "y": 250.7 },
+        { "t": 0.44, "x": 230.9, "y": 250.7 },
+        { "t": 0.46, "x": 230.9, "y": 250.8 },
+        { "t": 0.48, "x": 230.7, "y": 251 },
+        { "t": 0.5, "x": 230.6, "y": 251 },
+        { "t": 0.52, "x": 230.5, "y": 251.1 },
+        { "t": 0.54, "x": 230.3, "y": 251.1 },
+        { "t": 0.56, "x": 230.3, "y": 251.3 },
+        { "t": 0.58, "x": 230.2, "y": 251.3 },
+        { "t": 0.6, "x": 230, "y": 251.4 },
+        { "t": 0.62, "x": 229.9, "y": 251.5 },
+        { "t": 0.64, "x": 229.8, "y": 251.5 },
+        { "t": 0.66, "x": 229.8, "y": 251.7 },
+        { "t": 0.68, "x": 229.6, "y": 251.7 },
+        { "t": 0.7, "x": 229.5, "y": 251.8 },
+        { "t": 0.72, "x": 229.3, "y": 251.8 },
+        { "t": 0.74, "x": 229.2, "y": 252 },
+        { "t": 0.76, "x": 229.2, "y": 252.1 },
+        { "t": 0.78, "x": 229.1, "y": 252.1 },
+        { "t": 0.8, "x": 228.9, "y": 252.2 },
+        { "t": 0.82, "x": 228.8, "y": 252.2 },
+        { "t": 0.84, "x": 228.6, "y": 252.4 },
+        { "t": 0.86, "x": 228.6, "y": 252.4 },
+        { "t": 0.88, "x": 228.5, "y": 252.5 },
+        { "t": 0.9, "x": 228.4, "y": 252.7 },
+        { "t": 0.92, "x": 228.2, "y": 252.7 },
+        { "t": 0.94, "x": 228.1, "y": 252.8 },
+        { "t": 0.96, "x": 228.1, "y": 252.8 },
+        { "t": 0.98, "x": 227.9, "y": 252.9 },
+        { "t": 1, "x": 227.8, "y": 252.9 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 330, "y": 250 },
+        { "t": 0.04, "x": 330, "y": 250 },
+        { "t": 0.06, "x": 330, "y": 250 },
+        { "t": 0.08, "x": 330, "y": 250 },
+        { "t": 0.1, "x": 330, "y": 250 },
+        { "t": 0.12, "x": 330, "y": 250 },
+        { "t": 0.14, "x": 330, "y": 250 },
+        { "t": 0.16, "x": 330, "y": 250 },
+        { "t": 0.18, "x": 330, "y": 250 },
+        { "t": 0.2, "x": 330, "y": 250 },
+        { "t": 0.22, "x": 330, "y": 250 },
+        { "t": 0.24, "x": 330, "y": 250 },
+        { "t": 0.26, "x": 330, "y": 250 },
+        { "t": 0.28, "x": 330, "y": 250 },
+        { "t": 0.3, "x": 330, "y": 250 },
+        { "t": 0.32, "x": 330, "y": 250 },
+        { "t": 0.34, "x": 330, "y": 250 },
+        { "t": 0.36, "x": 330, "y": 250 },
+        { "t": 0.38, "x": 330, "y": 250 },
+        { "t": 0.4, "x": 330, "y": 250 },
+        { "t": 0.42, "x": 330, "y": 250 },
+        { "t": 0.44, "x": 330, "y": 250 },
+        { "t": 0.46, "x": 330, "y": 250 },
+        { "t": 0.48, "x": 330, "y": 250 },
+        { "t": 0.5, "x": 330, "y": 250 },
+        { "t": 0.52, "x": 330, "y": 250 },
+        { "t": 0.54, "x": 330, "y": 250 },
+        { "t": 0.56, "x": 330, "y": 250 },
+        { "t": 0.58, "x": 330, "y": 250 },
+        { "t": 0.6, "x": 330, "y": 250 },
+        { "t": 0.62, "x": 330, "y": 250 },
+        { "t": 0.64, "x": 330, "y": 250 },
+        { "t": 0.66, "x": 330, "y": 250 },
+        { "t": 0.68, "x": 337.6, "y": 250 },
+        { "t": 0.7, "x": 345.1, "y": 250 },
+        { "t": 0.72, "x": 352.7, "y": 250 },
+        { "t": 0.74, "x": 360.2, "y": 250 },
+        { "t": 0.76, "x": 367.8, "y": 250 },
+        { "t": 0.78, "x": 375.4, "y": 250 },
+        { "t": 0.8, "x": 382.9, "y": 250 },
+        { "t": 0.82, "x": 390.5, "y": 250 },
+        { "t": 0.84, "x": 398, "y": 250 },
+        { "t": 0.86, "x": 405.6, "y": 250 },
+        { "t": 0.88, "x": 413.2, "y": 250 },
+        { "t": 0.9, "x": 420.7, "y": 250 },
+        { "t": 0.92, "x": 428.3, "y": 250 },
+        { "t": 0.94, "x": 435.8, "y": 250 },
+        { "t": 0.96, "x": 428.3, "y": 250 },
+        { "t": 0.98, "x": 420.7, "y": 250 },
+        { "t": 1, "x": 413.2, "y": 250 }
+      ],
+      "WR_L": [
+        { "t": 0, "x": 330, "y": 116.7 },
+        { "t": 0.02, "x": 334.3, "y": 121.1 },
+        { "t": 0.04, "x": 338.7, "y": 125.4 },
+        { "t": 0.06, "x": 343, "y": 129.7 },
+        { "t": 0.08, "x": 347.4, "y": 134.1 },
+        { "t": 0.1, "x": 351.8, "y": 138.4 },
+        { "t": 0.12, "x": 356.2, "y": 142.8 },
+        { "t": 0.14, "x": 360.5, "y": 147.1 },
+        { "t": 0.16, "x": 364.9, "y": 151.6 },
+        { "t": 0.18, "x": 369.2, "y": 155.9 },
+        { "t": 0.2, "x": 373.5, "y": 160.3 },
+        { "t": 0.22, "x": 377.9, "y": 164.6 },
+        { "t": 0.24, "x": 382.2, "y": 168.9 },
+        { "t": 0.26, "x": 386.6, "y": 173.3 },
+        { "t": 0.28, "x": 391, "y": 177.6 },
+        { "t": 0.3, "x": 395.4, "y": 182 },
+        { "t": 0.32, "x": 399.7, "y": 186.3 },
+        { "t": 0.34, "x": 404.1, "y": 190.8 },
+        { "t": 0.36, "x": 408.4, "y": 195.1 },
+        { "t": 0.38, "x": 412.7, "y": 199.5 },
+        { "t": 0.4, "x": 417.1, "y": 203.8 },
+        { "t": 0.42, "x": 421.4, "y": 208.1 },
+        { "t": 0.44, "x": 425.8, "y": 212.5 },
+        { "t": 0.46, "x": 429.8, "y": 216.4 },
+        { "t": 0.48, "x": 433.3, "y": 220 },
+        { "t": 0.5, "x": 437, "y": 223.5 },
+        { "t": 0.52, "x": 440.5, "y": 227.2 },
+        { "t": 0.54, "x": 444.1, "y": 230.7 },
+        { "t": 0.56, "x": 447.6, "y": 234.3 },
+        { "t": 0.58, "x": 451.1, "y": 237.8 },
+        { "t": 0.6, "x": 454.7, "y": 241.5 },
+        { "t": 0.62, "x": 458.2, "y": 245 },
+        { "t": 0.64, "x": 461.9, "y": 248.5 },
+        { "t": 0.66, "x": 465.4, "y": 252.1 },
+        { "t": 0.68, "x": 469, "y": 255.6 },
+        { "t": 0.7, "x": 472.5, "y": 259.2 },
+        { "t": 0.72, "x": 476.2, "y": 262.7 },
+        { "t": 0.74, "x": 479.7, "y": 266.4 },
+        { "t": 0.76, "x": 483.3, "y": 269.9 },
+        { "t": 0.78, "x": 486.8, "y": 273.5 },
+        { "t": 0.8, "x": 490.3, "y": 277 },
+        { "t": 0.82, "x": 493.9, "y": 280.7 },
+        { "t": 0.84, "x": 497.4, "y": 284.2 },
+        { "t": 0.86, "x": 501.1, "y": 287.7 },
+        { "t": 0.88, "x": 504.6, "y": 291.3 },
+        { "t": 0.9, "x": 508.2, "y": 294.8 },
+        { "t": 0.92, "x": 511.7, "y": 298.4 },
+        { "t": 0.94, "x": 515.4, "y": 301.9 },
+        { "t": 0.96, "x": 518.9, "y": 305.6 },
+        { "t": 0.98, "x": 522.5, "y": 309.1 },
+        { "t": 1, "x": 526, "y": 312.7 }
+      ],
+      "WR_R": [
+        { "t": 0, "x": 330, "y": 383.3 },
+        { "t": 0.02, "x": 334.3, "y": 378.9 },
+        { "t": 0.04, "x": 338.7, "y": 374.6 },
+        { "t": 0.06, "x": 343, "y": 370.3 },
+        { "t": 0.08, "x": 347.4, "y": 365.9 },
+        { "t": 0.1, "x": 351.8, "y": 361.6 },
+        { "t": 0.12, "x": 356.2, "y": 357.2 },
+        { "t": 0.14, "x": 360.5, "y": 352.9 },
+        { "t": 0.16, "x": 364.9, "y": 348.4 },
+        { "t": 0.18, "x": 369.2, "y": 344.1 },
+        { "t": 0.2, "x": 373.5, "y": 339.7 },
+        { "t": 0.22, "x": 377.9, "y": 335.4 },
+        { "t": 0.24, "x": 382.2, "y": 331.1 },
+        { "t": 0.26, "x": 386.6, "y": 326.7 },
+        { "t": 0.28, "x": 391, "y": 322.4 },
+        { "t": 0.3, "x": 395.4, "y": 318 },
+        { "t": 0.32, "x": 399.7, "y": 313.7 },
+        { "t": 0.34, "x": 404.1, "y": 309.2 },
+        { "t": 0.36, "x": 408.4, "y": 304.9 },
+        { "t": 0.38, "x": 412.7, "y": 300.5 },
+        { "t": 0.4, "x": 417.1, "y": 296.2 },
+        { "t": 0.42, "x": 421.4, "y": 291.9 },
+        { "t": 0.44, "x": 425.8, "y": 287.5 },
+        { "t": 0.46, "x": 429.8, "y": 283.6 },
+        { "t": 0.48, "x": 433.3, "y": 280 },
+        { "t": 0.5, "x": 437, "y": 276.5 },
+        { "t": 0.52, "x": 440.5, "y": 272.8 },
+        { "t": 0.54, "x": 444.1, "y": 269.3 },
+        { "t": 0.56, "x": 447.6, "y": 265.7 },
+        { "t": 0.58, "x": 451.1, "y": 262.2 },
+        { "t": 0.6, "x": 454.7, "y": 258.5 },
+        { "t": 0.62, "x": 458.2, "y": 255 },
+        { "t": 0.64, "x": 461.9, "y": 251.5 },
+        { "t": 0.66, "x": 465.4, "y": 247.9 },
+        { "t": 0.68, "x": 469, "y": 244.4 },
+        { "t": 0.7, "x": 472.5, "y": 240.8 },
+        { "t": 0.72, "x": 476.2, "y": 237.3 },
+        { "t": 0.74, "x": 479.7, "y": 233.6 },
+        { "t": 0.76, "x": 483.3, "y": 230.1 },
+        { "t": 0.78, "x": 486.8, "y": 226.5 },
+        { "t": 0.8, "x": 490.3, "y": 223 },
+        { "t": 0.82, "x": 493.9, "y": 219.3 },
+        { "t": 0.84, "x": 497.4, "y": 215.8 },
+        { "t": 0.86, "x": 501.1, "y": 212.3 },
+        { "t": 0.88, "x": 504.6, "y": 208.7 },
+        { "t": 0.9, "x": 508.2, "y": 205.2 },
+        { "t": 0.92, "x": 511.7, "y": 201.6 },
+        { "t": 0.94, "x": 515.4, "y": 198.1 },
+        { "t": 0.96, "x": 518.9, "y": 194.4 },
+        { "t": 0.98, "x": 522.5, "y": 190.9 },
+        { "t": 1, "x": 526, "y": 187.3 }
+      ],
+      "RB": [
+        { "t": 0, "x": 225, "y": 250 },
+        { "t": 0.02, "x": 226.1, "y": 239.6 },
+        { "t": 0.04, "x": 227.2, "y": 229.1 },
+        { "t": 0.06, "x": 228.4, "y": 218.8 },
+        { "t": 0.08, "x": 229.5, "y": 208.4 },
+        { "t": 0.1, "x": 230.6, "y": 198.1 },
+        { "t": 0.12, "x": 231.7, "y": 187.6 },
+        { "t": 0.14, "x": 232.8, "y": 177.2 },
+        { "t": 0.16, "x": 234, "y": 166.8 },
+        { "t": 0.18, "x": 235.1, "y": 156.3 },
+        { "t": 0.2, "x": 236.2, "y": 146 },
+        { "t": 0.22, "x": 237.3, "y": 135.6 },
+        { "t": 0.24, "x": 238.4, "y": 125.3 },
+        { "t": 0.26, "x": 239, "y": 119.9 },
+        { "t": 0.28, "x": 239, "y": 119.9 },
+        { "t": 0.3, "x": 239, "y": 119.9 },
+        { "t": 0.32, "x": 239, "y": 119.9 },
+        { "t": 0.34, "x": 239, "y": 119.9 },
+        { "t": 0.36, "x": 239, "y": 119.9 },
+        { "t": 0.38, "x": 239, "y": 119.9 },
+        { "t": 0.4, "x": 239, "y": 119.9 },
+        { "t": 0.42, "x": 239, "y": 119.9 },
+        { "t": 0.44, "x": 239, "y": 119.9 },
+        { "t": 0.46, "x": 244.3, "y": 119.9 },
+        { "t": 0.48, "x": 255.1, "y": 119.9 },
+        { "t": 0.5, "x": 265.7, "y": 119.9 },
+        { "t": 0.52, "x": 276.4, "y": 119.9 },
+        { "t": 0.54, "x": 287.2, "y": 119.9 },
+        { "t": 0.56, "x": 297.8, "y": 119.9 },
+        { "t": 0.58, "x": 308.4, "y": 119.9 },
+        { "t": 0.6, "x": 319.2, "y": 119.9 },
+        { "t": 0.62, "x": 329.9, "y": 119.9 },
+        { "t": 0.64, "x": 340.5, "y": 119.9 },
+        { "t": 0.66, "x": 351.3, "y": 119.9 },
+        { "t": 0.68, "x": 361.9, "y": 119.9 },
+        { "t": 0.7, "x": 372.7, "y": 119.9 },
+        { "t": 0.72, "x": 383.3, "y": 119.9 },
+        { "t": 0.74, "x": 394, "y": 119.9 },
+        { "t": 0.76, "x": 404.8, "y": 119.9 },
+        { "t": 0.78, "x": 415.4, "y": 119.9 },
+        { "t": 0.8, "x": 426, "y": 119.9 },
+        { "t": 0.82, "x": 436.8, "y": 119.9 },
+        { "t": 0.84, "x": 447.5, "y": 119.9 },
+        { "t": 0.86, "x": 458.1, "y": 119.9 },
+        { "t": 0.88, "x": 468.9, "y": 119.9 },
+        { "t": 0.9, "x": 479.5, "y": 119.9 },
+        { "t": 0.92, "x": 490.3, "y": 119.9 },
+        { "t": 0.94, "x": 500.9, "y": 119.9 },
+        { "t": 0.96, "x": 511.6, "y": 119.9 },
+        { "t": 0.98, "x": 522.4, "y": 119.9 },
+        { "t": 1, "x": 533, "y": 119.9 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.3,
+        "label": "X and Y cross",
+        "target": "WR_L"
+      },
+      {
+        "t": 0.66,
+        "label": "C releases late",
+        "target": "C"
+      },
+      {
+        "t": 0.68,
+        "label": "Checks down to C",
+        "target": "C"
+      }
+    ],
+    "throw": {
+      "t0": 0.66,
+      "t1": 0.72,
+      "from": "QB",
+      "to": "C",
+      "type": "pass"
+    }
+  },
+  "optionPass": {
+    "name": "Option Pass",
+    "desc": "<b>Option Pass.</b> Single Back option. QB hands to RB running the option to the right &mdash; RB reads the edge and, before the defense can close, pitches it out to Y (WR R) trailing wide for the option pass. X clears vertically on the backside to hold the corner out of the play.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 284.08, "y": 250 },
+        { "t": 0.04, "x": 280.16, "y": 250 },
+        { "t": 0.06, "x": 276.38, "y": 250 },
+        { "t": 0.08, "x": 272.46, "y": 250 },
+        { "t": 0.1, "x": 268.54, "y": 250 },
+        { "t": 0.12, "x": 264.62, "y": 250 },
+        { "t": 0.14, "x": 260.84, "y": 250 },
+        { "t": 0.16, "x": 256.92, "y": 250 },
+        { "t": 0.18, "x": 253, "y": 250 },
+        { "t": 0.2, "x": 225, "y": 250 },
+        { "t": 0.22, "x": 239, "y": 247.62 },
+        { "t": 0.24, "x": 239, "y": 247.48 },
+        { "t": 0.26, "x": 239, "y": 247.48 },
+        { "t": 0.28, "x": 239, "y": 247.34 },
+        { "t": 0.3, "x": 239, "y": 247.34 },
+        { "t": 0.32, "x": 239, "y": 247.2 },
+        { "t": 0.34, "x": 239, "y": 247.2 },
+        { "t": 0.36, "x": 239, "y": 247.06 },
+        { "t": 0.38, "x": 239, "y": 247.06 },
+        { "t": 0.4, "x": 239, "y": 246.92 },
+        { "t": 0.42, "x": 239, "y": 246.92 },
+        { "t": 0.44, "x": 239, "y": 246.78 },
+        { "t": 0.46, "x": 239, "y": 246.78 },
+        { "t": 0.48, "x": 239, "y": 246.64 },
+        { "t": 0.5, "x": 239, "y": 246.64 },
+        { "t": 0.52, "x": 239, "y": 246.5 },
+        { "t": 0.54, "x": 239, "y": 246.5 },
+        { "t": 0.56, "x": 239, "y": 246.36 },
+        { "t": 0.58, "x": 239, "y": 246.36 },
+        { "t": 0.6, "x": 239, "y": 246.22 },
+        { "t": 0.62, "x": 239, "y": 246.22 },
+        { "t": 0.64, "x": 239, "y": 246.08 },
+        { "t": 0.66, "x": 239, "y": 246.08 },
+        { "t": 0.68, "x": 239, "y": 245.94 },
+        { "t": 0.7, "x": 239, "y": 245.94 },
+        { "t": 0.72, "x": 239, "y": 245.8 },
+        { "t": 0.74, "x": 239, "y": 245.8 },
+        { "t": 0.76, "x": 239, "y": 245.66 },
+        { "t": 0.78, "x": 239, "y": 245.66 },
+        { "t": 0.8, "x": 239, "y": 245.52 },
+        { "t": 0.82, "x": 239, "y": 245.52 },
+        { "t": 0.84, "x": 239, "y": 245.38 },
+        { "t": 0.86, "x": 239, "y": 245.38 },
+        { "t": 0.88, "x": 239, "y": 245.24 },
+        { "t": 0.9, "x": 239, "y": 245.24 },
+        { "t": 0.92, "x": 239, "y": 245.1 },
+        { "t": 0.94, "x": 239, "y": 245.1 },
+        { "t": 0.96, "x": 239, "y": 244.96 },
+        { "t": 0.98, "x": 239, "y": 244.96 },
+        { "t": 1, "x": 239, "y": 244.82 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 333.78, "y": 253.78 },
+        { "t": 0.04, "x": 337.42, "y": 257.42 },
+        { "t": 0.06, "x": 341.2, "y": 261.2 },
+        { "t": 0.08, "x": 344.98, "y": 264.98 },
+        { "t": 0.1, "x": 348.62, "y": 268.62 },
+        { "t": 0.12, "x": 352.4, "y": 272.4 },
+        { "t": 0.14, "x": 356.18, "y": 276.18 },
+        { "t": 0.16, "x": 359.82, "y": 279.82 },
+        { "t": 0.18, "x": 363.6, "y": 283.6 },
+        { "t": 0.2, "x": 367.38, "y": 287.38 },
+        { "t": 0.22, "x": 371.02, "y": 291.02 },
+        { "t": 0.24, "x": 374.8, "y": 294.8 },
+        { "t": 0.26, "x": 378.58, "y": 298.58 },
+        { "t": 0.28, "x": 382.22, "y": 302.22 },
+        { "t": 0.3, "x": 386, "y": 306 },
+        { "t": 0.32, "x": 389.78, "y": 309.78 },
+        { "t": 0.34, "x": 393.42, "y": 313.42 },
+        { "t": 0.36, "x": 397.2, "y": 317.2 },
+        { "t": 0.38, "x": 400.98, "y": 320.98 },
+        { "t": 0.4, "x": 404.62, "y": 324.62 },
+        { "t": 0.42, "x": 408.4, "y": 328.4 },
+        { "t": 0.44, "x": 412.18, "y": 332.18 },
+        { "t": 0.46, "x": 414.98, "y": 334.98 },
+        { "t": 0.48, "x": 417.08, "y": 337.08 },
+        { "t": 0.5, "x": 419.04, "y": 339.04 },
+        { "t": 0.52, "x": 421.14, "y": 341.14 },
+        { "t": 0.54, "x": 423.1, "y": 343.1 },
+        { "t": 0.56, "x": 425.2, "y": 345.2 },
+        { "t": 0.58, "x": 427.3, "y": 347.3 },
+        { "t": 0.6, "x": 429.26, "y": 349.26 },
+        { "t": 0.62, "x": 431.36, "y": 351.36 },
+        { "t": 0.64, "x": 433.32, "y": 353.32 },
+        { "t": 0.66, "x": 435.42, "y": 355.42 },
+        { "t": 0.68, "x": 437.38, "y": 357.38 },
+        { "t": 0.7, "x": 439.48, "y": 359.48 },
+        { "t": 0.72, "x": 441.44, "y": 361.44 },
+        { "t": 0.74, "x": 443.54, "y": 363.54 },
+        { "t": 0.76, "x": 445.5, "y": 365.5 },
+        { "t": 0.78, "x": 447.6, "y": 367.6 },
+        { "t": 0.8, "x": 449.7, "y": 369.7 },
+        { "t": 0.82, "x": 451.66, "y": 371.66 },
+        { "t": 0.84, "x": 453.76, "y": 373.76 },
+        { "t": 0.86, "x": 455.72, "y": 375.72 },
+        { "t": 0.88, "x": 457.82, "y": 377.82 },
+        { "t": 0.9, "x": 459.78, "y": 379.78 },
+        { "t": 0.92, "x": 461.88, "y": 381.88 },
+        { "t": 0.94, "x": 463.84, "y": 383.84 },
+        { "t": 0.96, "x": 465.94, "y": 385.94 },
+        { "t": 0.98, "x": 467.9, "y": 387.9 },
+        { "t": 1, "x": 470, "y": 390 }
+      ],
+      "WR_L": [
+        { "t": 0, "x": 330, "y": 116.72 },
+        { "t": 0.02, "x": 335.6, "y": 116.72 },
+        { "t": 0.04, "x": 341.2, "y": 116.72 },
+        { "t": 0.06, "x": 346.8, "y": 116.72 },
+        { "t": 0.08, "x": 352.4, "y": 116.72 },
+        { "t": 0.1, "x": 358, "y": 116.72 },
+        { "t": 0.12, "x": 363.6, "y": 116.72 },
+        { "t": 0.14, "x": 369.2, "y": 116.72 },
+        { "t": 0.16, "x": 374.8, "y": 116.72 },
+        { "t": 0.18, "x": 380.4, "y": 116.72 },
+        { "t": 0.2, "x": 386, "y": 116.72 },
+        { "t": 0.22, "x": 391.6, "y": 116.72 },
+        { "t": 0.24, "x": 397.2, "y": 116.72 },
+        { "t": 0.26, "x": 402.8, "y": 116.72 },
+        { "t": 0.28, "x": 408.4, "y": 116.72 },
+        { "t": 0.3, "x": 414, "y": 116.72 },
+        { "t": 0.32, "x": 419.6, "y": 116.72 },
+        { "t": 0.34, "x": 425.2, "y": 116.72 },
+        { "t": 0.36, "x": 430.8, "y": 116.72 },
+        { "t": 0.38, "x": 436.4, "y": 116.72 },
+        { "t": 0.4, "x": 442, "y": 116.72 },
+        { "t": 0.42, "x": 447.6, "y": 116.72 },
+        { "t": 0.44, "x": 453.2, "y": 116.72 },
+        { "t": 0.46, "x": 458.8, "y": 116.72 },
+        { "t": 0.48, "x": 464.4, "y": 116.72 },
+        { "t": 0.5, "x": 470, "y": 116.72 },
+        { "t": 0.52, "x": 473.92, "y": 120.64 },
+        { "t": 0.54, "x": 477.84, "y": 124.56 },
+        { "t": 0.56, "x": 481.76, "y": 128.48 },
+        { "t": 0.58, "x": 485.68, "y": 132.4 },
+        { "t": 0.6, "x": 489.6, "y": 136.32 },
+        { "t": 0.62, "x": 493.52, "y": 140.24 },
+        { "t": 0.64, "x": 497.44, "y": 144.16 },
+        { "t": 0.66, "x": 501.36, "y": 148.08 },
+        { "t": 0.68, "x": 505.28, "y": 152 },
+        { "t": 0.7, "x": 509.2, "y": 155.92 },
+        { "t": 0.72, "x": 513.12, "y": 159.84 },
+        { "t": 0.74, "x": 517.04, "y": 163.76 },
+        { "t": 0.76, "x": 520.96, "y": 167.68 },
+        { "t": 0.78, "x": 524.88, "y": 171.6 },
+        { "t": 0.8, "x": 528.8, "y": 175.52 },
+        { "t": 0.82, "x": 532.72, "y": 179.44 },
+        { "t": 0.84, "x": 536.64, "y": 183.36 },
+        { "t": 0.86, "x": 540.56, "y": 187.28 },
+        { "t": 0.88, "x": 544.48, "y": 191.2 },
+        { "t": 0.9, "x": 548.4, "y": 195.12 },
+        { "t": 0.92, "x": 552.32, "y": 199.04 },
+        { "t": 0.94, "x": 556.24, "y": 202.96 },
+        { "t": 0.96, "x": 560.16, "y": 206.88 },
+        { "t": 0.98, "x": 564.08, "y": 210.8 },
+        { "t": 1, "x": 568, "y": 214.72 }
+      ],
+      "WR_R": [
+        { "t": 0, "x": 330, "y": 383.28 },
+        { "t": 0.02, "x": 337.56, "y": 383.28 },
+        { "t": 0.04, "x": 345.12, "y": 383.28 },
+        { "t": 0.06, "x": 352.68, "y": 383.28 },
+        { "t": 0.08, "x": 360.24, "y": 383.28 },
+        { "t": 0.1, "x": 367.8, "y": 383.28 },
+        { "t": 0.12, "x": 375.36, "y": 383.28 },
+        { "t": 0.14, "x": 382.92, "y": 383.28 },
+        { "t": 0.16, "x": 390.48, "y": 383.28 },
+        { "t": 0.18, "x": 398.04, "y": 383.28 },
+        { "t": 0.2, "x": 405.6, "y": 383.28 },
+        { "t": 0.22, "x": 413.16, "y": 383.28 },
+        { "t": 0.24, "x": 420.72, "y": 383.28 },
+        { "t": 0.26, "x": 428.28, "y": 383.28 },
+        { "t": 0.28, "x": 435.84, "y": 383.28 },
+        { "t": 0.3, "x": 443.4, "y": 383.28 },
+        { "t": 0.32, "x": 450.96, "y": 383.28 },
+        { "t": 0.34, "x": 458.52, "y": 383.28 },
+        { "t": 0.36, "x": 466.08, "y": 383.28 },
+        { "t": 0.38, "x": 473.64, "y": 383.28 },
+        { "t": 0.4, "x": 481.2, "y": 383.28 },
+        { "t": 0.42, "x": 488.76, "y": 383.28 },
+        { "t": 0.44, "x": 496.32, "y": 383.28 },
+        { "t": 0.46, "x": 503.88, "y": 383.28 },
+        { "t": 0.48, "x": 511.44, "y": 383.28 },
+        { "t": 0.5, "x": 519, "y": 383.28 },
+        { "t": 0.52, "x": 526.56, "y": 383.28 },
+        { "t": 0.54, "x": 534.12, "y": 383.28 },
+        { "t": 0.56, "x": 541.68, "y": 383.28 },
+        { "t": 0.58, "x": 549.24, "y": 383.28 },
+        { "t": 0.6, "x": 556.8, "y": 383.28 },
+        { "t": 0.62, "x": 564.36, "y": 383.28 },
+        { "t": 0.64, "x": 571.92, "y": 383.28 },
+        { "t": 0.66, "x": 579.48, "y": 383.28 },
+        { "t": 0.68, "x": 587.04, "y": 383.28 },
+        { "t": 0.7, "x": 594.6, "y": 383.28 },
+        { "t": 0.72, "x": 602.16, "y": 383.28 },
+        { "t": 0.74, "x": 609.72, "y": 383.28 },
+        { "t": 0.76, "x": 617.28, "y": 383.28 },
+        { "t": 0.78, "x": 624.84, "y": 383.28 },
+        { "t": 0.8, "x": 632.4, "y": 383.28 },
+        { "t": 0.82, "x": 639.96, "y": 383.28 },
+        { "t": 0.84, "x": 647.52, "y": 383.28 },
+        { "t": 0.86, "x": 655.08, "y": 383.28 },
+        { "t": 0.88, "x": 662.64, "y": 383.28 },
+        { "t": 0.9, "x": 670.2, "y": 383.28 },
+        { "t": 0.92, "x": 677.76, "y": 383.28 },
+        { "t": 0.94, "x": 685.32, "y": 383.28 },
+        { "t": 0.96, "x": 692.88, "y": 383.28 },
+        { "t": 0.98, "x": 700.44, "y": 383.28 },
+        { "t": 1, "x": 708, "y": 383.28 }
+      ],
+      "RB": [
+        { "t": 0, "x": 225, "y": 250 },
+        { "t": 0.02, "x": 223.6, "y": 254.48 },
+        { "t": 0.04, "x": 222.2, "y": 259.1 },
+        { "t": 0.06, "x": 220.8, "y": 263.58 },
+        { "t": 0.08, "x": 219.4, "y": 268.2 },
+        { "t": 0.1, "x": 218, "y": 272.68 },
+        { "t": 0.12, "x": 216.6, "y": 280.24 },
+        { "t": 0.14, "x": 215.2, "y": 287.8 },
+        { "t": 0.16, "x": 213.8, "y": 295.5 },
+        { "t": 0.18, "x": 212.4, "y": 303.06 },
+        { "t": 0.2, "x": 211, "y": 310.62 },
+        { "t": 0.22, "x": 211, "y": 319.58 },
+        { "t": 0.24, "x": 211, "y": 328.68 },
+        { "t": 0.26, "x": 211, "y": 337.64 },
+        { "t": 0.28, "x": 211, "y": 346.6 },
+        { "t": 0.3, "x": 211, "y": 351.08 },
+        { "t": 0.32, "x": 211, "y": 355.7 },
+        { "t": 0.34, "x": 211, "y": 360.32 },
+        { "t": 0.36, "x": 211, "y": 364.8 },
+        { "t": 0.38, "x": 220.94, "y": 369.28 },
+        { "t": 0.4, "x": 230.74, "y": 373.9 },
+        { "t": 0.42, "x": 232, "y": 374.46 },
+        { "t": 0.44, "x": 232, "y": 374.46 },
+        { "t": 0.46, "x": 232, "y": 374.46 },
+        { "t": 0.48, "x": 232, "y": 374.46 },
+        { "t": 0.5, "x": 232, "y": 374.46 },
+        { "t": 0.52, "x": 232, "y": 374.46 },
+        { "t": 0.54, "x": 232, "y": 374.46 },
+        { "t": 0.56, "x": 232, "y": 374.46 },
+        { "t": 0.58, "x": 232, "y": 374.46 },
+        { "t": 0.6, "x": 232, "y": 374.46 },
+        { "t": 0.62, "x": 232, "y": 374.46 },
+        { "t": 0.64, "x": 232, "y": 374.46 },
+        { "t": 0.66, "x": 232, "y": 374.46 },
+        { "t": 0.68, "x": 232, "y": 374.46 },
+        { "t": 0.7, "x": 232, "y": 374.46 },
+        { "t": 0.72, "x": 232, "y": 374.46 },
+        { "t": 0.74, "x": 232, "y": 374.46 },
+        { "t": 0.76, "x": 232, "y": 374.46 },
+        { "t": 0.78, "x": 232, "y": 374.46 },
+        { "t": 0.8, "x": 232, "y": 374.46 },
+        { "t": 0.82, "x": 232, "y": 374.46 },
+        { "t": 0.84, "x": 232, "y": 374.46 },
+        { "t": 0.86, "x": 232, "y": 374.46 },
+        { "t": 0.88, "x": 232, "y": 374.46 },
+        { "t": 0.9, "x": 232, "y": 374.46 },
+        { "t": 0.92, "x": 232, "y": 374.46 },
+        { "t": 0.94, "x": 232, "y": 374.46 },
+        { "t": 0.96, "x": 232, "y": 374.46 },
+        { "t": 0.98, "x": 232, "y": 374.46 },
+        { "t": 1, "x": 232, "y": 374.46 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.12,
+        "label": "Handoff → RB",
+        "target": "RB"
+      },
+      {
+        "t": 0.38,
+        "label": "Option: pass → WR (R)",
+        "target": "WR_R"
+      }
+    ],
+    "throws": [
+      {
+        "t0": 0.2,
+        "t1": 0.22,
+        "from": "QB",
+        "to": "RB",
+        "type": "handoff"
+      },
+      {
+        "t0": 0.46,
+        "t1": 0.52,
+        "from": "RB",
+        "to": "WR_R",
+        "type": "pass"
+      }
+    ]
+  },
+  "tripsInsideScreen": {
+    "name": "Trips Inside Screen",
+    "desc": "<b>Trips Inside Screen.</b> Trips formation quick screen. QB flips it out to WR1 (outside) right at the snap while WR2 and WR3 release vertically from the inside to occupy defenders and clear a lane &mdash; WR1 catches it behind the line and turns upfield.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 288, "y": 250 },
+        { "t": 0.04, "x": 288, "y": 250.14 },
+        { "t": 0.06, "x": 288, "y": 250.14 },
+        { "t": 0.08, "x": 288, "y": 250.28 },
+        { "t": 0.1, "x": 288, "y": 250.28 },
+        { "t": 0.12, "x": 288, "y": 250.42 },
+        { "t": 0.14, "x": 288, "y": 250.42 },
+        { "t": 0.16, "x": 288, "y": 250.42 },
+        { "t": 0.18, "x": 288, "y": 250.56 },
+        { "t": 0.2, "x": 288, "y": 250.56 },
+        { "t": 0.22, "x": 288, "y": 250.7 },
+        { "t": 0.24, "x": 288, "y": 250.7 },
+        { "t": 0.26, "x": 288, "y": 250.84 },
+        { "t": 0.28, "x": 288, "y": 250.84 },
+        { "t": 0.3, "x": 288, "y": 250.84 },
+        { "t": 0.32, "x": 288, "y": 250.98 },
+        { "t": 0.34, "x": 288, "y": 250.98 },
+        { "t": 0.36, "x": 288, "y": 251.12 },
+        { "t": 0.38, "x": 288, "y": 251.12 },
+        { "t": 0.4, "x": 288, "y": 251.26 },
+        { "t": 0.42, "x": 288, "y": 251.26 },
+        { "t": 0.44, "x": 288, "y": 251.26 },
+        { "t": 0.46, "x": 288, "y": 251.4 },
+        { "t": 0.48, "x": 288, "y": 251.4 },
+        { "t": 0.5, "x": 288, "y": 251.54 },
+        { "t": 0.52, "x": 288, "y": 251.54 },
+        { "t": 0.54, "x": 288, "y": 251.68 },
+        { "t": 0.56, "x": 288, "y": 251.68 },
+        { "t": 0.58, "x": 288, "y": 251.68 },
+        { "t": 0.6, "x": 288, "y": 251.82 },
+        { "t": 0.62, "x": 288, "y": 251.82 },
+        { "t": 0.64, "x": 288, "y": 251.96 },
+        { "t": 0.66, "x": 288, "y": 251.96 },
+        { "t": 0.68, "x": 288, "y": 252.1 },
+        { "t": 0.7, "x": 288, "y": 252.1 },
+        { "t": 0.72, "x": 288, "y": 252.1 },
+        { "t": 0.74, "x": 288, "y": 252.24 },
+        { "t": 0.76, "x": 288, "y": 252.24 },
+        { "t": 0.78, "x": 288, "y": 252.38 },
+        { "t": 0.8, "x": 288, "y": 252.38 },
+        { "t": 0.82, "x": 288, "y": 252.52 },
+        { "t": 0.84, "x": 288, "y": 252.52 },
+        { "t": 0.86, "x": 288, "y": 252.52 },
+        { "t": 0.88, "x": 288, "y": 252.66 },
+        { "t": 0.9, "x": 288, "y": 252.66 },
+        { "t": 0.92, "x": 288, "y": 252.8 },
+        { "t": 0.94, "x": 288, "y": 252.8 },
+        { "t": 0.96, "x": 288, "y": 252.94 },
+        { "t": 0.98, "x": 288, "y": 252.94 },
+        { "t": 1, "x": 288, "y": 252.94 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 335.04, "y": 250 },
+        { "t": 0.04, "x": 340.22, "y": 250 },
+        { "t": 0.06, "x": 345.26, "y": 250 },
+        { "t": 0.08, "x": 350.3, "y": 250 },
+        { "t": 0.1, "x": 355.48, "y": 250 },
+        { "t": 0.12, "x": 360.52, "y": 250 },
+        { "t": 0.14, "x": 365.7, "y": 250 },
+        { "t": 0.16, "x": 370.74, "y": 250 },
+        { "t": 0.18, "x": 375.78, "y": 250 },
+        { "t": 0.2, "x": 380.96, "y": 250 },
+        { "t": 0.22, "x": 386, "y": 250 },
+        { "t": 0.24, "x": 391.04, "y": 250 },
+        { "t": 0.26, "x": 396.22, "y": 250 },
+        { "t": 0.28, "x": 401.26, "y": 250 },
+        { "t": 0.3, "x": 406.3, "y": 250 },
+        { "t": 0.32, "x": 411.48, "y": 250 },
+        { "t": 0.34, "x": 416.52, "y": 250 },
+        { "t": 0.36, "x": 421.7, "y": 250 },
+        { "t": 0.38, "x": 426.74, "y": 250 },
+        { "t": 0.4, "x": 431.78, "y": 250 },
+        { "t": 0.42, "x": 436.96, "y": 250 },
+        { "t": 0.44, "x": 442, "y": 250 },
+        { "t": 0.46, "x": 447.04, "y": 250 },
+        { "t": 0.48, "x": 452.22, "y": 250 },
+        { "t": 0.5, "x": 457.26, "y": 250 },
+        { "t": 0.52, "x": 462.3, "y": 250 },
+        { "t": 0.54, "x": 467.48, "y": 250 },
+        { "t": 0.56, "x": 470, "y": 252.52 },
+        { "t": 0.58, "x": 470, "y": 257.42 },
+        { "t": 0.6, "x": 470, "y": 262.46 },
+        { "t": 0.62, "x": 470, "y": 267.36 },
+        { "t": 0.64, "x": 470, "y": 272.4 },
+        { "t": 0.66, "x": 470, "y": 277.44 },
+        { "t": 0.68, "x": 470, "y": 282.34 },
+        { "t": 0.7, "x": 470, "y": 287.38 },
+        { "t": 0.72, "x": 470, "y": 292.28 },
+        { "t": 0.74, "x": 470, "y": 297.32 },
+        { "t": 0.76, "x": 470, "y": 302.22 },
+        { "t": 0.78, "x": 470, "y": 307.26 },
+        { "t": 0.8, "x": 470, "y": 312.16 },
+        { "t": 0.82, "x": 470, "y": 317.2 },
+        { "t": 0.84, "x": 470, "y": 322.24 },
+        { "t": 0.86, "x": 470, "y": 327.14 },
+        { "t": 0.88, "x": 470, "y": 332.18 },
+        { "t": 0.9, "x": 470, "y": 337.08 },
+        { "t": 0.92, "x": 470, "y": 342.12 },
+        { "t": 0.94, "x": 470, "y": 347.02 },
+        { "t": 0.96, "x": 470, "y": 352.06 },
+        { "t": 0.98, "x": 470, "y": 356.96 },
+        { "t": 1, "x": 470, "y": 362 }
+      ],
+      "WR1": [
+        { "t": 0, "x": 330, "y": 425.28 },
+        { "t": 0.02, "x": 331.12, "y": 400.92 },
+        { "t": 0.04, "x": 332.24, "y": 376.42 },
+        { "t": 0.06, "x": 333.36, "y": 352.06 },
+        { "t": 0.08, "x": 334.48, "y": 327.56 },
+        { "t": 0.1, "x": 335.6, "y": 303.2 },
+        { "t": 0.12, "x": 336.72, "y": 278.84 },
+        { "t": 0.14, "x": 337.84, "y": 254.34 },
+        { "t": 0.16, "x": 338.96, "y": 229.98 },
+        { "t": 0.18, "x": 340.08, "y": 205.48 },
+        { "t": 0.2, "x": 341.2, "y": 181.12 },
+        { "t": 0.22, "x": 342.32, "y": 156.62 },
+        { "t": 0.24, "x": 343.44, "y": 132.26 },
+        { "t": 0.26, "x": 344, "y": 119.94 },
+        { "t": 0.28, "x": 344, "y": 119.94 },
+        { "t": 0.3, "x": 344, "y": 119.94 },
+        { "t": 0.32, "x": 344, "y": 119.94 },
+        { "t": 0.34, "x": 344, "y": 119.94 },
+        { "t": 0.36, "x": 344, "y": 119.94 },
+        { "t": 0.38, "x": 344, "y": 119.94 },
+        { "t": 0.4, "x": 344, "y": 119.94 },
+        { "t": 0.42, "x": 344, "y": 119.94 },
+        { "t": 0.44, "x": 344, "y": 119.94 },
+        { "t": 0.46, "x": 349.32, "y": 119.94 },
+        { "t": 0.48, "x": 360.1, "y": 119.94 },
+        { "t": 0.5, "x": 370.74, "y": 119.94 },
+        { "t": 0.52, "x": 381.38, "y": 119.94 },
+        { "t": 0.54, "x": 392.16, "y": 119.94 },
+        { "t": 0.56, "x": 402.8, "y": 119.94 },
+        { "t": 0.58, "x": 413.44, "y": 119.94 },
+        { "t": 0.6, "x": 424.22, "y": 119.94 },
+        { "t": 0.62, "x": 434.86, "y": 119.94 },
+        { "t": 0.64, "x": 445.5, "y": 119.94 },
+        { "t": 0.66, "x": 456.28, "y": 119.94 },
+        { "t": 0.68, "x": 466.92, "y": 119.94 },
+        { "t": 0.7, "x": 477.7, "y": 119.94 },
+        { "t": 0.72, "x": 488.34, "y": 119.94 },
+        { "t": 0.74, "x": 498.98, "y": 119.94 },
+        { "t": 0.76, "x": 509.76, "y": 119.94 },
+        { "t": 0.78, "x": 520.4, "y": 119.94 },
+        { "t": 0.8, "x": 531.04, "y": 119.94 },
+        { "t": 0.82, "x": 541.82, "y": 119.94 },
+        { "t": 0.84, "x": 552.46, "y": 119.94 },
+        { "t": 0.86, "x": 563.1, "y": 119.94 },
+        { "t": 0.88, "x": 573.88, "y": 119.94 },
+        { "t": 0.9, "x": 584.52, "y": 119.94 },
+        { "t": 0.92, "x": 595.3, "y": 119.94 },
+        { "t": 0.94, "x": 605.94, "y": 119.94 },
+        { "t": 0.96, "x": 616.58, "y": 119.94 },
+        { "t": 0.98, "x": 627.36, "y": 119.94 },
+        { "t": 1, "x": 638, "y": 119.94 }
+      ],
+      "WR2": [
+        { "t": 0, "x": 316, "y": 383.28 },
+        { "t": 0.02, "x": 323.56, "y": 383.28 },
+        { "t": 0.04, "x": 331.12, "y": 383.28 },
+        { "t": 0.06, "x": 338.68, "y": 383.28 },
+        { "t": 0.08, "x": 346.24, "y": 383.28 },
+        { "t": 0.1, "x": 353.8, "y": 383.28 },
+        { "t": 0.12, "x": 361.36, "y": 383.28 },
+        { "t": 0.14, "x": 368.92, "y": 383.28 },
+        { "t": 0.16, "x": 376.48, "y": 383.28 },
+        { "t": 0.18, "x": 384.04, "y": 383.28 },
+        { "t": 0.2, "x": 391.6, "y": 383.28 },
+        { "t": 0.22, "x": 399.16, "y": 383.28 },
+        { "t": 0.24, "x": 406.72, "y": 383.28 },
+        { "t": 0.26, "x": 414.28, "y": 383.28 },
+        { "t": 0.28, "x": 421.84, "y": 383.28 },
+        { "t": 0.3, "x": 429.4, "y": 383.28 },
+        { "t": 0.32, "x": 436.96, "y": 383.28 },
+        { "t": 0.34, "x": 444.52, "y": 383.28 },
+        { "t": 0.36, "x": 452.08, "y": 383.28 },
+        { "t": 0.38, "x": 459.64, "y": 383.28 },
+        { "t": 0.4, "x": 467.2, "y": 383.28 },
+        { "t": 0.42, "x": 474.76, "y": 383.28 },
+        { "t": 0.44, "x": 482.32, "y": 383.28 },
+        { "t": 0.46, "x": 489.88, "y": 383.28 },
+        { "t": 0.48, "x": 497.44, "y": 383.28 },
+        { "t": 0.5, "x": 505, "y": 383.28 },
+        { "t": 0.52, "x": 512.56, "y": 383.28 },
+        { "t": 0.54, "x": 520.12, "y": 383.28 },
+        { "t": 0.56, "x": 527.68, "y": 383.28 },
+        { "t": 0.58, "x": 535.24, "y": 383.28 },
+        { "t": 0.6, "x": 542.8, "y": 383.28 },
+        { "t": 0.62, "x": 550.36, "y": 383.28 },
+        { "t": 0.64, "x": 557.92, "y": 383.28 },
+        { "t": 0.66, "x": 565.48, "y": 383.28 },
+        { "t": 0.68, "x": 573.04, "y": 383.28 },
+        { "t": 0.7, "x": 580.6, "y": 383.28 },
+        { "t": 0.72, "x": 588.16, "y": 383.28 },
+        { "t": 0.74, "x": 595.72, "y": 383.28 },
+        { "t": 0.76, "x": 603.28, "y": 383.28 },
+        { "t": 0.78, "x": 610.84, "y": 383.28 },
+        { "t": 0.8, "x": 618.4, "y": 383.28 },
+        { "t": 0.82, "x": 625.96, "y": 383.28 },
+        { "t": 0.84, "x": 633.52, "y": 383.28 },
+        { "t": 0.86, "x": 641.08, "y": 383.28 },
+        { "t": 0.88, "x": 648.64, "y": 383.28 },
+        { "t": 0.9, "x": 656.2, "y": 383.28 },
+        { "t": 0.92, "x": 663.76, "y": 383.28 },
+        { "t": 0.94, "x": 671.32, "y": 383.28 },
+        { "t": 0.96, "x": 678.88, "y": 383.28 },
+        { "t": 0.98, "x": 686.44, "y": 383.28 },
+        { "t": 1, "x": 694, "y": 383.28 }
+      ],
+      "WR3": [
+        { "t": 0, "x": 302, "y": 341.28 },
+        { "t": 0.02, "x": 309.56, "y": 341.28 },
+        { "t": 0.04, "x": 317.12, "y": 341.28 },
+        { "t": 0.06, "x": 324.68, "y": 341.28 },
+        { "t": 0.08, "x": 332.24, "y": 341.28 },
+        { "t": 0.1, "x": 339.8, "y": 341.28 },
+        { "t": 0.12, "x": 347.36, "y": 341.28 },
+        { "t": 0.14, "x": 354.92, "y": 341.28 },
+        { "t": 0.16, "x": 362.48, "y": 341.28 },
+        { "t": 0.18, "x": 370.04, "y": 341.28 },
+        { "t": 0.2, "x": 377.6, "y": 341.28 },
+        { "t": 0.22, "x": 385.16, "y": 341.28 },
+        { "t": 0.24, "x": 392.72, "y": 341.28 },
+        { "t": 0.26, "x": 400.28, "y": 341.28 },
+        { "t": 0.28, "x": 407.84, "y": 341.28 },
+        { "t": 0.3, "x": 415.4, "y": 341.28 },
+        { "t": 0.32, "x": 422.96, "y": 341.28 },
+        { "t": 0.34, "x": 430.52, "y": 341.28 },
+        { "t": 0.36, "x": 438.08, "y": 341.28 },
+        { "t": 0.38, "x": 445.64, "y": 341.28 },
+        { "t": 0.4, "x": 453.2, "y": 341.28 },
+        { "t": 0.42, "x": 460.76, "y": 341.28 },
+        { "t": 0.44, "x": 468.32, "y": 341.28 },
+        { "t": 0.46, "x": 475.88, "y": 341.28 },
+        { "t": 0.48, "x": 483.44, "y": 341.28 },
+        { "t": 0.5, "x": 491, "y": 341.28 },
+        { "t": 0.52, "x": 498.56, "y": 341.28 },
+        { "t": 0.54, "x": 506.12, "y": 341.28 },
+        { "t": 0.56, "x": 513.68, "y": 341.28 },
+        { "t": 0.58, "x": 521.24, "y": 341.28 },
+        { "t": 0.6, "x": 528.8, "y": 341.28 },
+        { "t": 0.62, "x": 536.36, "y": 341.28 },
+        { "t": 0.64, "x": 543.92, "y": 341.28 },
+        { "t": 0.66, "x": 551.48, "y": 341.28 },
+        { "t": 0.68, "x": 559.04, "y": 341.28 },
+        { "t": 0.7, "x": 566.6, "y": 341.28 },
+        { "t": 0.72, "x": 574.16, "y": 341.28 },
+        { "t": 0.74, "x": 581.72, "y": 341.28 },
+        { "t": 0.76, "x": 589.28, "y": 341.28 },
+        { "t": 0.78, "x": 596.84, "y": 341.28 },
+        { "t": 0.8, "x": 604.4, "y": 341.28 },
+        { "t": 0.82, "x": 611.96, "y": 341.28 },
+        { "t": 0.84, "x": 619.52, "y": 341.28 },
+        { "t": 0.86, "x": 627.08, "y": 341.28 },
+        { "t": 0.88, "x": 634.64, "y": 341.28 },
+        { "t": 0.9, "x": 642.2, "y": 341.28 },
+        { "t": 0.92, "x": 649.76, "y": 341.28 },
+        { "t": 0.94, "x": 657.32, "y": 341.28 },
+        { "t": 0.96, "x": 664.88, "y": 341.28 },
+        { "t": 0.98, "x": 672.44, "y": 341.28 },
+        { "t": 1, "x": 680, "y": 341.28 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.26,
+        "label": "Handoff → WR1 (outside)",
+        "target": "WR1"
+      }
+    ],
+    "throw": {
+      "t0": 0.34,
+      "t1": 0.38,
+      "from": "QB",
+      "to": "WR1",
+      "type": "handoff"
+    }
+  },
+  "paFakePower": {
+    "name": "PA Fake Power",
+    "desc": "<b>PA Fake Power.</b> Pro Set play-action off Power. QB opens and fakes the handoff to RB (L), selling the same wide-bounce look as the real run, then resets to throw. RB (R) leaks out of the fake and breaks in &mdash; QB reads the in-cut and delivers once the box has bit on the run. X clears vertically to hold the corner, same as Power.",
+    "routes": {
+      "QB": [
+        { "t": 0, "x": 288, "y": 250 },
+        { "t": 0.02, "x": 281.7, "y": 250 },
+        { "t": 0.04, "x": 275.4, "y": 250 },
+        { "t": 0.06, "x": 269.1, "y": 250 },
+        { "t": 0.08, "x": 262.8, "y": 250 },
+        { "t": 0.1, "x": 256.5, "y": 250 },
+        { "t": 0.12, "x": 250.2, "y": 250 },
+        { "t": 0.14, "x": 243.9, "y": 250 },
+        { "t": 0.16, "x": 237.6, "y": 250 },
+        { "t": 0.18, "x": 231.3, "y": 250 },
+        { "t": 0.2, "x": 225, "y": 250 },
+        { "t": 0.22, "x": 225, "y": 247.62 },
+        { "t": 0.24, "x": 225, "y": 247.48 },
+        { "t": 0.26, "x": 225, "y": 247.48 },
+        { "t": 0.28, "x": 225, "y": 247.34 },
+        { "t": 0.3, "x": 225, "y": 247.34 },
+        { "t": 0.32, "x": 225, "y": 247.2 },
+        { "t": 0.34, "x": 225, "y": 247.2 },
+        { "t": 0.36, "x": 225, "y": 247.06 },
+        { "t": 0.38, "x": 225, "y": 247.06 },
+        { "t": 0.4, "x": 225, "y": 246.92 },
+        { "t": 0.42, "x": 225, "y": 246.92 },
+        { "t": 0.44, "x": 225, "y": 246.78 },
+        { "t": 0.46, "x": 225, "y": 246.78 },
+        { "t": 0.48, "x": 225, "y": 246.64 },
+        { "t": 0.5, "x": 225, "y": 246.64 },
+        { "t": 0.52, "x": 225, "y": 246.5 },
+        { "t": 0.54, "x": 225, "y": 246.5 },
+        { "t": 0.56, "x": 225, "y": 246.36 },
+        { "t": 0.58, "x": 225, "y": 246.36 },
+        { "t": 0.6, "x": 225, "y": 246.22 },
+        { "t": 0.62, "x": 225, "y": 246.22 },
+        { "t": 0.64, "x": 225, "y": 246.08 },
+        { "t": 0.66, "x": 225, "y": 246.08 },
+        { "t": 0.68, "x": 225, "y": 245.94 },
+        { "t": 0.7, "x": 225, "y": 245.94 },
+        { "t": 0.72, "x": 225, "y": 245.8 },
+        { "t": 0.74, "x": 225, "y": 245.8 },
+        { "t": 0.76, "x": 225, "y": 245.66 },
+        { "t": 0.78, "x": 225, "y": 245.66 },
+        { "t": 0.8, "x": 225, "y": 245.52 },
+        { "t": 0.82, "x": 225, "y": 245.52 },
+        { "t": 0.84, "x": 225, "y": 245.38 },
+        { "t": 0.86, "x": 225, "y": 245.38 },
+        { "t": 0.88, "x": 225, "y": 245.24 },
+        { "t": 0.9, "x": 225, "y": 245.24 },
+        { "t": 0.92, "x": 225, "y": 245.1 },
+        { "t": 0.94, "x": 225, "y": 245.1 },
+        { "t": 0.96, "x": 225, "y": 244.96 },
+        { "t": 0.98, "x": 225, "y": 244.96 },
+        { "t": 1, "x": 225, "y": 244.82 }
+      ],
+      "C": [
+        { "t": 0, "x": 330, "y": 250 },
+        { "t": 0.02, "x": 333.78, "y": 246.22 },
+        { "t": 0.04, "x": 337.42, "y": 242.58 },
+        { "t": 0.06, "x": 341.2, "y": 238.8 },
+        { "t": 0.08, "x": 344.98, "y": 235.02 },
+        { "t": 0.1, "x": 348.62, "y": 231.38 },
+        { "t": 0.12, "x": 352.4, "y": 227.6 },
+        { "t": 0.14, "x": 356.18, "y": 223.82 },
+        { "t": 0.16, "x": 359.82, "y": 220.18 },
+        { "t": 0.18, "x": 363.6, "y": 216.4 },
+        { "t": 0.2, "x": 367.38, "y": 212.62 },
+        { "t": 0.22, "x": 371.02, "y": 208.98 },
+        { "t": 0.24, "x": 374.8, "y": 205.2 },
+        { "t": 0.26, "x": 378.58, "y": 201.42 },
+        { "t": 0.28, "x": 382.22, "y": 197.78 },
+        { "t": 0.3, "x": 386, "y": 194 },
+        { "t": 0.32, "x": 389.78, "y": 190.22 },
+        { "t": 0.34, "x": 393.42, "y": 186.58 },
+        { "t": 0.36, "x": 397.2, "y": 182.8 },
+        { "t": 0.38, "x": 400.98, "y": 179.02 },
+        { "t": 0.4, "x": 404.62, "y": 175.38 },
+        { "t": 0.42, "x": 408.4, "y": 171.6 },
+        { "t": 0.44, "x": 412.18, "y": 167.82 },
+        { "t": 0.46, "x": 414.98, "y": 165.02 },
+        { "t": 0.48, "x": 417.08, "y": 162.92 },
+        { "t": 0.5, "x": 419.04, "y": 160.96 },
+        { "t": 0.52, "x": 421.14, "y": 158.86 },
+        { "t": 0.54, "x": 423.1, "y": 156.9 },
+        { "t": 0.56, "x": 425.2, "y": 154.8 },
+        { "t": 0.58, "x": 427.3, "y": 152.7 },
+        { "t": 0.6, "x": 429.26, "y": 150.74 },
+        { "t": 0.62, "x": 431.36, "y": 148.64 },
+        { "t": 0.64, "x": 433.32, "y": 146.68 },
+        { "t": 0.66, "x": 435.42, "y": 144.58 },
+        { "t": 0.68, "x": 437.38, "y": 142.62 },
+        { "t": 0.7, "x": 439.48, "y": 140.52 },
+        { "t": 0.72, "x": 441.44, "y": 138.56 },
+        { "t": 0.74, "x": 443.54, "y": 136.46 },
+        { "t": 0.76, "x": 445.5, "y": 134.5 },
+        { "t": 0.78, "x": 447.6, "y": 132.4 },
+        { "t": 0.8, "x": 449.7, "y": 130.3 },
+        { "t": 0.82, "x": 451.66, "y": 128.34 },
+        { "t": 0.84, "x": 453.76, "y": 126.24 },
+        { "t": 0.86, "x": 455.72, "y": 124.28 },
+        { "t": 0.88, "x": 457.82, "y": 122.18 },
+        { "t": 0.9, "x": 459.78, "y": 120.22 },
+        { "t": 0.92, "x": 461.88, "y": 118.12 },
+        { "t": 0.94, "x": 463.84, "y": 116.16 },
+        { "t": 0.96, "x": 465.94, "y": 114.06 },
+        { "t": 0.98, "x": 467.9, "y": 112.1 },
+        { "t": 1, "x": 470, "y": 110 }
+      ],
+      "WR": [
+        { "t": 0, "x": 330, "y": 383.28 },
+        { "t": 0.02, "x": 337.56, "y": 383.28 },
+        { "t": 0.04, "x": 345.12, "y": 383.28 },
+        { "t": 0.06, "x": 352.68, "y": 383.28 },
+        { "t": 0.08, "x": 360.24, "y": 383.28 },
+        { "t": 0.1, "x": 367.8, "y": 383.28 },
+        { "t": 0.12, "x": 375.36, "y": 383.28 },
+        { "t": 0.14, "x": 382.92, "y": 383.28 },
+        { "t": 0.16, "x": 390.48, "y": 383.28 },
+        { "t": 0.18, "x": 398.04, "y": 383.28 },
+        { "t": 0.2, "x": 405.6, "y": 383.28 },
+        { "t": 0.22, "x": 413.16, "y": 383.28 },
+        { "t": 0.24, "x": 420.72, "y": 383.28 },
+        { "t": 0.26, "x": 428.28, "y": 383.28 },
+        { "t": 0.28, "x": 435.84, "y": 383.28 },
+        { "t": 0.3, "x": 443.4, "y": 383.28 },
+        { "t": 0.32, "x": 450.96, "y": 383.28 },
+        { "t": 0.34, "x": 458.52, "y": 383.28 },
+        { "t": 0.36, "x": 466.08, "y": 383.28 },
+        { "t": 0.38, "x": 473.64, "y": 383.28 },
+        { "t": 0.4, "x": 481.2, "y": 383.28 },
+        { "t": 0.42, "x": 488.76, "y": 383.28 },
+        { "t": 0.44, "x": 496.32, "y": 383.28 },
+        { "t": 0.46, "x": 503.88, "y": 383.28 },
+        { "t": 0.48, "x": 511.44, "y": 383.28 },
+        { "t": 0.5, "x": 519, "y": 383.28 },
+        { "t": 0.52, "x": 526.56, "y": 383.28 },
+        { "t": 0.54, "x": 534.12, "y": 383.28 },
+        { "t": 0.56, "x": 541.68, "y": 383.28 },
+        { "t": 0.58, "x": 549.24, "y": 383.28 },
+        { "t": 0.6, "x": 556.8, "y": 383.28 },
+        { "t": 0.62, "x": 564.36, "y": 383.28 },
+        { "t": 0.64, "x": 571.92, "y": 383.28 },
+        { "t": 0.66, "x": 579.48, "y": 383.28 },
+        { "t": 0.68, "x": 587.04, "y": 383.28 },
+        { "t": 0.7, "x": 594.6, "y": 383.28 },
+        { "t": 0.72, "x": 602.16, "y": 383.28 },
+        { "t": 0.74, "x": 609.72, "y": 383.28 },
+        { "t": 0.76, "x": 617.28, "y": 383.28 },
+        { "t": 0.78, "x": 624.84, "y": 383.28 },
+        { "t": 0.8, "x": 632.4, "y": 383.28 },
+        { "t": 0.82, "x": 639.96, "y": 383.28 },
+        { "t": 0.84, "x": 647.52, "y": 383.28 },
+        { "t": 0.86, "x": 655.08, "y": 383.28 },
+        { "t": 0.88, "x": 662.64, "y": 383.28 },
+        { "t": 0.9, "x": 670.2, "y": 383.28 },
+        { "t": 0.92, "x": 677.76, "y": 383.28 },
+        { "t": 0.94, "x": 685.32, "y": 383.28 },
+        { "t": 0.96, "x": 692.88, "y": 383.28 },
+        { "t": 0.98, "x": 700.44, "y": 383.28 },
+        { "t": 1, "x": 708, "y": 383.28 }
+      ],
+      "RB_L": [
+        { "t": 0, "x": 225, "y": 187 },
+        { "t": 0.02, "x": 223.6, "y": 192.6 },
+        { "t": 0.04, "x": 222.2, "y": 198.2 },
+        { "t": 0.06, "x": 220.8, "y": 203.8 },
+        { "t": 0.08, "x": 219.4, "y": 209.4 },
+        { "t": 0.1, "x": 218, "y": 215 },
+        { "t": 0.12, "x": 216.6, "y": 220.6 },
+        { "t": 0.14, "x": 215.2, "y": 226.2 },
+        { "t": 0.16, "x": 213.8, "y": 231.8 },
+        { "t": 0.18, "x": 212.4, "y": 237.4 },
+        { "t": 0.2, "x": 211, "y": 243 },
+        { "t": 0.22, "x": 211, "y": 248.6 },
+        { "t": 0.24, "x": 211, "y": 254.2 },
+        { "t": 0.26, "x": 211, "y": 259.8 },
+        { "t": 0.28, "x": 211, "y": 265.4 },
+        { "t": 0.3, "x": 211, "y": 271 },
+        { "t": 0.32, "x": 211, "y": 276.6 },
+        { "t": 0.34, "x": 211, "y": 282.2 },
+        { "t": 0.36, "x": 211, "y": 287.8 },
+        { "t": 0.38, "x": 213.8, "y": 293.4 },
+        { "t": 0.4, "x": 216.6, "y": 299 },
+        { "t": 0.42, "x": 220.8, "y": 304.6 },
+        { "t": 0.44, "x": 225, "y": 310.2 },
+        { "t": 0.46, "x": 229.2, "y": 315.8 },
+        { "t": 0.48, "x": 233.4, "y": 321.4 },
+        { "t": 0.5, "x": 237.6, "y": 327 },
+        { "t": 0.52, "x": 241.8, "y": 332.6 },
+        { "t": 0.54, "x": 246, "y": 338.2 },
+        { "t": 0.56, "x": 250.2, "y": 343.8 },
+        { "t": 0.58, "x": 253, "y": 349.4 },
+        { "t": 0.6, "x": 255.8, "y": 355 },
+        { "t": 0.62, "x": 258.6, "y": 360.6 },
+        { "t": 0.64, "x": 266.44, "y": 366.2 },
+        { "t": 0.66, "x": 274.28, "y": 371.8 },
+        { "t": 0.68, "x": 282.12, "y": 377.4 },
+        { "t": 0.7, "x": 289.96, "y": 383 },
+        { "t": 0.72, "x": 297.8, "y": 388.6 },
+        { "t": 0.74, "x": 305.64, "y": 394.2 },
+        { "t": 0.76, "x": 313.48, "y": 399.8 },
+        { "t": 0.78, "x": 321.32, "y": 405.4 },
+        { "t": 0.8, "x": 329.16, "y": 411 },
+        { "t": 0.82, "x": 337, "y": 416.6 },
+        { "t": 0.84, "x": 346.8, "y": 422.2 },
+        { "t": 0.86, "x": 356.6, "y": 422.2 },
+        { "t": 0.88, "x": 366.4, "y": 422.2 },
+        { "t": 0.9, "x": 376.2, "y": 422.2 },
+        { "t": 0.92, "x": 386, "y": 422.2 },
+        { "t": 0.94, "x": 395.8, "y": 422.2 },
+        { "t": 0.96, "x": 405.6, "y": 422.2 },
+        { "t": 0.98, "x": 415.4, "y": 422.2 },
+        { "t": 1, "x": 425.2, "y": 422.2 }
+      ],
+      "RB_R": [
+        { "t": 0, "x": 225, "y": 313 },
+        { "t": 0.02, "x": 230.04, "y": 313 },
+        { "t": 0.04, "x": 235.22, "y": 313 },
+        { "t": 0.06, "x": 240.26, "y": 313 },
+        { "t": 0.08, "x": 245.3, "y": 313 },
+        { "t": 0.1, "x": 250.48, "y": 313 },
+        { "t": 0.12, "x": 255.52, "y": 313 },
+        { "t": 0.14, "x": 260.7, "y": 313 },
+        { "t": 0.16, "x": 265.74, "y": 313 },
+        { "t": 0.18, "x": 270.78, "y": 313 },
+        { "t": 0.2, "x": 275.96, "y": 313 },
+        { "t": 0.22, "x": 281, "y": 313 },
+        { "t": 0.24, "x": 286.04, "y": 313 },
+        { "t": 0.26, "x": 291.22, "y": 313 },
+        { "t": 0.28, "x": 296.26, "y": 313 },
+        { "t": 0.3, "x": 301.3, "y": 313 },
+        { "t": 0.32, "x": 306.48, "y": 313 },
+        { "t": 0.34, "x": 311.52, "y": 313 },
+        { "t": 0.36, "x": 316.7, "y": 313 },
+        { "t": 0.38, "x": 321.74, "y": 313 },
+        { "t": 0.4, "x": 326.78, "y": 313 },
+        { "t": 0.42, "x": 331.96, "y": 313 },
+        { "t": 0.44, "x": 337, "y": 313 },
+        { "t": 0.46, "x": 342.04, "y": 313 },
+        { "t": 0.48, "x": 347.22, "y": 313 },
+        { "t": 0.5, "x": 352.26, "y": 313 },
+        { "t": 0.52, "x": 357.3, "y": 313 },
+        { "t": 0.54, "x": 362.48, "y": 313 },
+        { "t": 0.56, "x": 365, "y": 310.48 },
+        { "t": 0.58, "x": 365, "y": 305.58 },
+        { "t": 0.6, "x": 365, "y": 300.54 },
+        { "t": 0.62, "x": 365, "y": 295.64 },
+        { "t": 0.64, "x": 365, "y": 290.6 },
+        { "t": 0.66, "x": 365, "y": 285.56 },
+        { "t": 0.68, "x": 365, "y": 280.66 },
+        { "t": 0.7, "x": 365, "y": 275.62 },
+        { "t": 0.72, "x": 365, "y": 270.72 },
+        { "t": 0.74, "x": 365, "y": 265.68 },
+        { "t": 0.76, "x": 365, "y": 260.78 },
+        { "t": 0.78, "x": 365, "y": 255.74 },
+        { "t": 0.8, "x": 365, "y": 250.84 },
+        { "t": 0.82, "x": 365, "y": 245.8 },
+        { "t": 0.84, "x": 365, "y": 240.76 },
+        { "t": 0.86, "x": 365, "y": 235.86 },
+        { "t": 0.88, "x": 365, "y": 230.82 },
+        { "t": 0.9, "x": 365, "y": 225.92 },
+        { "t": 0.92, "x": 365, "y": 220.88 },
+        { "t": 0.94, "x": 365, "y": 215.98 },
+        { "t": 0.96, "x": 365, "y": 210.94 },
+        { "t": 0.98, "x": 365, "y": 206.04 },
+        { "t": 1, "x": 365, "y": 201 }
+      ]
+    },
+    "reads": [
+      {
+        "t": 0.46,
+        "label": "Read: In",
+        "target": "RB_R"
+      }
+    ],
+    "throw": {
+      "t0": 0.58,
+      "t1": 0.64,
+      "from": "QB",
+      "to": "RB_R",
+      "type": "pass"
+    }
+  },
   "customPass": {
     "name": "Custom Pass",
     "desc": "<b>Custom Pass.</b> Build your own pass concept — pick a formation, assign a route to each receiver, and choose who the QB throws to.",
@@ -1770,12 +4214,12 @@
     Object.keys(play.routes).forEach(key=>{
       if (key === 'QB') return; // don't show QB drop as a "route"
       const p = el('path',{d:pathFromWaypoints(play.routes[key]), fill:'none',
-        stroke:'var(--off-red)','stroke-width':2,'stroke-dasharray':'5,5','opacity':0.35});
+        stroke:'var(--off-red)','stroke-width':4,'stroke-dasharray':'5,5','opacity':0.7});
       routeLayer.appendChild(p);
     });
     Object.keys(def.routes).forEach(key=>{
       const p = el('path',{d:pathFromWaypoints(def.routes[key]), fill:'none',
-        stroke:'var(--def-blue)','stroke-width':2,'stroke-dasharray':'2,5','opacity':0.3});
+        stroke:'var(--def-blue)','stroke-width':4,'stroke-dasharray':'2,5','opacity':0.6});
       routeLayer.appendChild(p);
     });
   }
@@ -1880,7 +4324,7 @@
     PLAYS.customPass.reads = [
       {t: Math.max(0.05, targetRouteDef.throwT - 0.12), label: 'Read: ' + targetRouteDef.label, target: customPass.target}
     ];
-    PLAYS.customPass.throw = {t0: targetRouteDef.throwT, t1: targetRouteDef.throwT + 0.08, from:'QB', to: customPass.target, type:'pass'};
+    PLAYS.customPass.throws = [{t0: targetRouteDef.throwT, t1: targetRouteDef.throwT + 0.08, from:'QB', to: customPass.target, type:'pass'}];
 
     const routeSummary = formation.wrSlots.map(s => (ROLE_NAMES[s]||s) + ': ' + ROUTES[customPass.routes[s]].label).join(', ');
     PLAYS.customPass.desc = `<b>Custom Pass — ${formation.name}.</b> ${routeSummary}. Throwing to ${ROLE_NAMES[customPass.target]||customPass.target}.`;
@@ -1968,6 +4412,9 @@
     qbAction: 'handoff',       // 'handoff' | 'delayedHandoff' | 'toss'
     paths: {},                 // slot key -> path key (from PATH_ORDER)
     goesTo: null,                // slot key that actually carries the ball
+    fakeSlot: null,              // optional: slot key that sells a decoy carry (cosmetic only — never gets the real ball)
+    optionEnabled: false,        // does the real carrier have the option to pull up and pass?
+    optionTarget: null,          // slot key the carrier throws to if the option is used
     labels: {}                  // slot key -> displayed letter, swapped on flip
   };
 
@@ -1985,6 +4432,15 @@
       customRun.goesTo = slots.find(s=>s.startsWith('RB')) || slots.find(s=>s.startsWith('WR')) || slots[0];
       if (customRun.paths[customRun.goesTo] === 'stay') customRun.paths[customRun.goesTo] = 'dive';
     }
+    // A slot can't sell the fake if it just became the real carrier, and an
+    // option target can't be the carrier throwing to himself — both reset
+    // quietly rather than erroring, since formation/goesTo changes are the
+    // normal way these go stale.
+    if (customRun.fakeSlot === customRun.goesTo) customRun.fakeSlot = null;
+    if (customRun.fakeSlot && !slots.includes(customRun.fakeSlot)) customRun.fakeSlot = null;
+    if (customRun.optionTarget === customRun.goesTo) customRun.optionTarget = null;
+    if (customRun.optionTarget && !slots.includes(customRun.optionTarget)) customRun.optionTarget = null;
+    if (!customRun.optionTarget) customRun.optionEnabled = false;
 
     const carrierSlot = customRun.goesTo;
     const carrierPos = positions[carrierSlot];
@@ -1993,70 +4449,201 @@
     const carrierSide = carrierPos.side || (carrierPos.y < CENTER_Y ? 'L' : 'R');
     const qbPos = positions.QB;
 
+    // How long a directional run path's pre-cut phase takes — this governs
+    // EVERY WR/RB-type slot assigned a Sweep/Off-Tackle/Dive, whether or
+    // not that slot ends up with the ball. A decoy selling a fake has to
+    // move exactly like the real thing would, on the same clock, or the
+    // fake doesn't sell — so this is computed once, up front, and reused
+    // for the carrier below and for every other slot's route further down.
+    const HOLD = {handoff:0.2, delayedHandoff:0.68, toss:0};
+    const wrMeshT = Math.max(HOLD[customRun.qbAction] || 0, 0.35);
+    const rbMeshT = Math.max(HOLD[customRun.qbAction] || 0, 0.05);
+
+    // Where a WR-type slot's lateral run ends, for a given path/side —
+    // past the far-side RB if the path crosses away from his own
+    // alignment (Pro Set: the other RB; Single Back: the lone RB; Trips
+    // has no RB to reference, so it meshes toward the QB's line instead),
+    // or right where he's standing if it doesn't cross (nothing to run
+    // past). Same rule regardless of who ends up carrying.
+    function wrMeshY(pos, pathKey, side){
+      const pathDir = pathDefFor(pathKey).dir || 0;
+      const crossing = pathDir !== 0 && ((side === 'L' && pathDir > 0) || (side === 'R' && pathDir < 0));
+      if (!crossing) return pos.y;
+      const farRB = positions.RB_L && positions.RB_R ? (side === 'L' ? positions.RB_R : positions.RB_L)
+                  : positions.RB ? positions.RB
+                  : null;
+      return farRB ? clampY(farRB.y + pathDir*2*YARD_PX) : qbPos.y; // past the far RB, 2 yd overshoot
+    }
+
+    // Full waypoints for a directional run path on ANY slot — carrier or
+    // decoy. A WR-type slot runs its lateral pre-cut phase first (straight
+    // at his own depth, out to wrMeshY, over wrMeshT), then the belly arc.
+    // An RB-type slot is already in the backfield — no lateral run, he
+    // just holds at his own spot until rbMeshT (as if waiting on the
+    // exchange), then explodes into the same arc. Anything else (a pass
+    // route, or a run path handed to neither a WR nor RB slot, e.g. the
+    // Center) runs straight from wherever the player's standing, unchanged.
+    function pathFor(slot, pos, pathKey, side){
+      const isWR = slot.startsWith('WR'), isRB = slot.startsWith('RB');
+      if (!RUN_PATH_KEYS.includes(pathKey) || (!isWR && !isRB)){
+        return pathDefFor(pathKey).generate(pos.x, pos.y, side);
+      }
+      const def = pathDefFor(pathKey);
+      // A measured, self-timed RB shape (currently just Sweep) replaces the
+      // generic hold-then-arc entirely — it already includes its own
+      // pre-mesh drift, so there's no separate hold phase to splice in.
+      // Scoped to Handoff for now, since that's what it was measured
+      // against; Toss/Delayed Handoff still fall through to the generic
+      // mechanic below until they're measured too.
+      if (isRB && def.rbGenerate && customRun.qbAction === 'handoff'){
+        return def.rbGenerate(pos.x, pos.y);
+      }
+      const meshT = isWR ? wrMeshT : rbMeshT;
+      const meshY = isWR ? wrMeshY(pos, pathKey, side) : pos.y;
+      const preWaypoints = [{t:0,x:pos.x,y:pos.y},{t:meshT,x:pos.x,y:meshY}];
+      const localWps = def.generate(pos.x, meshY, side);
+      const postWaypoints = localWps.slice(1).map(wp => ({ t: meshT + wp.t*(1-meshT), x: wp.x, y: wp.y }));
+      return preWaypoints.concat(postWaypoints);
+    }
+
     let carrierWaypoints, qbWaypoints, throwT0, throwT1;
 
     if (customRun.qbAction === 'toss'){
-      // No mesh point — the carrier's path runs from the snap; QB pitches mid-stride.
-      carrierWaypoints = pathDefFor(carrierPathKey).generate(carrierPos.x, carrierPos.y, carrierSide);
-      qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:0.15,x:qbPos.x-2*YARD_PX,y:qbPos.y},{t:1,x:qbPos.x-2*YARD_PX,y:qbPos.y+3}];
+      // No mesh-timed exchange — QB stays put at the snap spot (no drop,
+      // no approach) and leads the carrier on his designed path; the
+      // pitch is thrown ahead of where he started, into where the path
+      // takes him. The carrier's path itself still gets the same
+      // lateral-then-cut treatment as everyone else (pathFor handles that).
+      carrierWaypoints = pathFor(carrierSlot, carrierPos, carrierPathKey, carrierSide);
+      qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:1,x:qbPos.x,y:qbPos.y+3}];
       throwT0 = 0.12; throwT1 = 0.2;
     } else {
       // Handoff / Delayed Handoff share the same mechanic: exchange fires
       // once the carrier is available — instantly for a nearby RB (who
       // just stays put), or after real travel time for a WR crossing in
       // from a wide alignment. Delayed Handoff forces a long hold regardless.
-      const HOLD = {handoff:0.2, delayedHandoff:0.68};
-      const travelT = carrierIsWR ? 0.35 : 0.05;
-      const exchangeT = Math.max(HOLD[customRun.qbAction], travelT);
-
-      const originX = carrierIsWR ? (qbPos.x - 1*YARD_PX) : carrierPos.x;
-      const originY = carrierIsWR ? qbPos.y : carrierPos.y;
-
-      const preWaypoints = carrierIsWR
-        ? [{t:0,x:carrierPos.x,y:carrierPos.y},{t:exchangeT,x:originX,y:originY}]   // WR travels to QB
-        : [{t:0,x:carrierPos.x,y:carrierPos.y},{t:exchangeT,x:carrierPos.x,y:carrierPos.y}]; // RB stays put
-
-      const localWps = pathDefFor(carrierPathKey).generate(originX, originY, carrierSide);
-      const postWaypoints = localWps.slice(1).map(wp => ({ t: exchangeT + wp.t*(1-exchangeT), x: wp.x, y: wp.y }));
-      carrierWaypoints = preWaypoints.concat(postWaypoints);
+      const meshT = carrierIsWR ? wrMeshT : rbMeshT;
+      carrierWaypoints = pathFor(carrierSlot, carrierPos, carrierPathKey, carrierSide);
 
       if (carrierIsWR){
-        // QB stays near his own drop, waiting for the WR to arrive.
-        qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:0.2,x:qbPos.x-2*YARD_PX,y:qbPos.y},{t:1,x:qbPos.x-2*YARD_PX,y:qbPos.y+3}];
+        // QB remains in place — no drop, no approach — while the WR comes to him.
+        qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},{t:1,x:qbPos.x,y:qbPos.y+3}];
+      } else if (pathDefFor(carrierPathKey).rbGenerate && customRun.qbAction === 'handoff'){
+        // Measured sweep-handoff footwork: QB steps to a fixed mesh depth
+        // (not toward the RB's start point — the RB is already drifting
+        // laterally by the time the ball comes out), takes the snap-to-mesh
+        // beat at t=0.18→0.20, then settles into a near-static post-mesh
+        // spot with only a hair of lateral drift toward the play side —
+        // he's not chasing the RB downfield, he's holding after the give.
+        const dirSign = pathDefFor(carrierPathKey).dir || 1;
+        qbWaypoints = [
+          {t:0,    x:qbPos.x,               y:qbPos.y},
+          {t:0.18, x:LOS_X-5.5*YARD_PX,      y:qbPos.y},
+          {t:0.20, x:LOS_X-7.5*YARD_PX,      y:qbPos.y},
+          {t:0.22, x:LOS_X-6.5*YARD_PX,      y:clampY(qbPos.y + dirSign*(-0.17)*YARD_PX)},
+          {t:1,    x:LOS_X-6.5*YARD_PX,      y:clampY(qbPos.y + dirSign*(-0.37)*YARD_PX)}
+        ];
       } else {
         // QB travels to the RB at a fixed, quick pace — identical speed
         // whether it's a Handoff or Delayed Handoff. Any extra delay is a
-        // hold AT the RB (the exchange still fires at exchangeT), not a
+        // hold AT the RB (the exchange still fires at meshT), not a
         // slower approach — this is what makes Delayed Handoff read as a
         // play-action pass fake that resolves into a draw, not just a
         // generically slow handoff.
         const approachT = 0.18;
         qbWaypoints = [{t:0,x:qbPos.x,y:qbPos.y},
                         {t:approachT,x:carrierPos.x+2*YARD_PX,y:carrierPos.y},
-                        {t:exchangeT,x:carrierPos.x+1*YARD_PX,y:carrierPos.y},
+                        {t:meshT,x:carrierPos.x+1*YARD_PX,y:carrierPos.y},
                         {t:1,x:carrierPos.x+1*YARD_PX,y:carrierPos.y+3}];
       }
-      throwT0 = Math.max(0, exchangeT-0.02); throwT1 = exchangeT+0.03;
+
+      // Ball-transfer timing: a stationary RB takes the ball right at the
+      // mesh point (meshT) — same as always. A WR who runs laterally
+      // before the mesh is different: the real exchange doesn't happen
+      // wherever his lateral run happens to end (that's out near the far
+      // RB, well past the formation) — it happens as he crosses the
+      // Center, same as a real jet-sweep/orbit handoff. So if his lateral
+      // path passes the Center's spot, the throw fires there instead of
+      // at meshT (which still governs the rest of his run — he keeps
+      // going out to the mesh point before cutting up, just without the
+      // ball yet drawn in the QB's hand past this point).
+      let throwAtT = meshT;
+      if (carrierIsWR){
+        const meshY = wrMeshY(carrierPos, carrierPathKey, carrierSide);
+        if (meshY !== carrierPos.y){
+          const centerFrac = (positions.C.y - carrierPos.y) / (meshY - carrierPos.y);
+          if (centerFrac >= 0 && centerFrac <= 1) throwAtT = centerFrac * meshT;
+        }
+      }
+      throwT0 = Math.max(0, throwAtT-0.02); throwT1 = throwAtT+0.03;
+    }
+
+    // Option: once he has the ball, an option carrier runs his ACTUAL
+    // assigned path — the same belly shape a "keep it" run would use — up
+    // to the pull-up point for that specific path (RUN_PATHS[...].pullUpYd,
+    // a fixed depth behind the LOS: further back for a sweep, which takes
+    // longer to develop, than for an off-tackle). That's where he'd plant,
+    // read, and throw for real, so the animation holds there once the pass
+    // fires, instead of a generic time-based hold disconnected from the
+    // path's real geometry.
+    let optT0 = null, optT1 = null;
+    if (customRun.optionEnabled && customRun.optionTarget){
+      const pullUpYd = pathDefFor(carrierPathKey).pullUpYd || 5;
+      const pullUpX = LOS_X - pullUpYd*YARD_PX;
+      const pullUpT = Math.max(throwT1 + 0.02, Math.min(0.95, findTAtX(carrierWaypoints, pullUpX)));
+      const holdStart = getPosAtT(carrierWaypoints, pullUpT);
+      optT0 = pullUpT + 0.05;
+      optT1 = optT0 + 0.08;
+      carrierWaypoints = carrierWaypoints.filter(wp => wp.t < pullUpT).concat([
+        {t: pullUpT, x: holdStart.x, y: holdStart.y},
+        {t: Math.min(0.999, optT1+0.02), x: holdStart.x, y: holdStart.y},
+        {t: 1, x: holdStart.x, y: holdStart.y}
+      ]);
     }
 
     routes[carrierSlot] = carrierWaypoints;
     routes.QB = qbWaypoints;
 
-    // Everyone else runs their assigned path independently (decoy/fake motion, no ball).
+    // Everyone else runs their assigned path independently (decoy/fake
+    // motion, no ball) — through the SAME pathFor() the carrier uses, so a
+    // directional run path looks identical whether or not that slot has
+    // the ball. This matters more for decoys than the carrier, honestly:
+    // a defense reads motion, not who's holding a ball icon only we can see.
     slots.forEach(slot=>{
       if (slot === carrierSlot) return;
       const pos = positions[slot];
       const side = pos.side || (pos.y < CENTER_Y ? 'L' : 'R');
-      routes[slot] = pathDefFor(customRun.paths[slot]).generate(pos.x, pos.y, side);
+      routes[slot] = pathFor(slot, pos, customRun.paths[slot], side);
     });
 
     PLAYS.customRun.routes = routes;
     const carrierPathLabel = pathDefFor(carrierPathKey).label;
-    PLAYS.customRun.reads = [
+    const throws = [{t0:throwT0, t1:throwT1, from:'QB', to:carrierSlot, type:'handoff'}];
+    const reads = [
       {t: Math.max(0.05, throwT0-0.08), label: QB_ACTION_LABELS[customRun.qbAction]+' → '+(ROLE_NAMES[carrierSlot]||carrierSlot), target: carrierSlot}
     ];
-    PLAYS.customRun.throw = {t0:throwT0, t1:throwT1, from:'QB', to:carrierSlot, type:'handoff'};
-    PLAYS.customRun.desc = `<b>Custom Run — ${formation.name}.</b> ${QB_ACTION_LABELS[customRun.qbAction]} to ${ROLE_NAMES[carrierSlot]||carrierSlot} (${carrierPathLabel}).`;
+    let desc = `<b>Custom Run — ${formation.name}.</b> ${QB_ACTION_LABELS[customRun.qbAction]} to ${ROLE_NAMES[carrierSlot]||carrierSlot} (${carrierPathLabel}).`;
+
+    // Option: the real carrier can pull up and throw instead of running his
+    // path out. This is independent of qbAction/carrier path on purpose —
+    // any carrier, however he got the ball, can be given the option; we
+    // just don't build plays that use it off every combination. Timing
+    // (optT0/optT1) was already worked out above, alongside the hold that
+    // keeps him behind the LOS until this moment.
+    if (customRun.optionEnabled && customRun.optionTarget && routes[customRun.optionTarget]){
+      throws.push({t0:optT0, t1:optT1, from:carrierSlot, to:customRun.optionTarget, type:'pass'});
+      reads.push({t: Math.max(0.05, optT0-0.08), label:'Option: pass → '+(ROLE_NAMES[customRun.optionTarget]||customRun.optionTarget), target:customRun.optionTarget});
+      desc += ` Option: ${ROLE_NAMES[carrierSlot]||carrierSlot} holds behind the line, then can pass to ${ROLE_NAMES[customRun.optionTarget]||customRun.optionTarget}.`;
+    }
+
+    // Fake: purely cosmetic — never touches routes/throws/goesTo, just tells
+    // drawBall() which decoy to show a ghost ball near while he sells it.
+    PLAYS.customRun.fakeSlot = (customRun.fakeSlot && routes[customRun.fakeSlot]) ? customRun.fakeSlot : null;
+    if (PLAYS.customRun.fakeSlot) desc += ` (${ROLE_NAMES[PLAYS.customRun.fakeSlot]||PLAYS.customRun.fakeSlot} sells the fake.)`;
+
+    PLAYS.customRun.reads = reads;
+    PLAYS.customRun.throws = throws;
+    PLAYS.customRun.desc = desc;
   }
 
   function buildRunBuilderPanel(){
@@ -2145,8 +4732,44 @@
       customRun.goesTo = val;
       regenerateCustomRun();
       drawRoutePreviews();
+      buildRunBuilderPanel(); // carrier changed — fake/option slot lists depend on it
       render();
     });
+
+    // sells the fake — any other slot, purely cosmetic, never gets the real ball
+    const fakeOptions = [['', '(none)']].concat(
+      formation.wrSlots.filter(s => s !== customRun.goesTo).map(s=>[s, ROLE_NAMES[s]||s])
+    );
+    makeSelect('Sells the fake', fakeOptions, customRun.fakeSlot || '', (val)=>{
+      customRun.fakeSlot = val || null;
+      logEvent('fake_slot_select', {context:'classic', slot: customRun.fakeSlot});
+      regenerateCustomRun();
+      drawRoutePreviews();
+      render();
+    });
+
+    // option to pass — lives on the real carrier, independent of qbAction/path
+    makeSelect('Option to pass', [['off','Off'],['on','On']], customRun.optionEnabled ? 'on' : 'off', (val)=>{
+      customRun.optionEnabled = (val === 'on');
+      if (customRun.optionEnabled && !customRun.optionTarget){
+        customRun.optionTarget = formation.wrSlots.find(s => s !== customRun.goesTo) || null;
+      }
+      logEvent('option_toggle', {context:'classic', enabled: customRun.optionEnabled});
+      regenerateCustomRun();
+      drawRoutePreviews();
+      buildRunBuilderPanel(); // show/hide the target picker
+      render();
+    });
+    if (customRun.optionEnabled){
+      const targetOptions = formation.wrSlots.filter(s => s !== customRun.goesTo).map(s=>[s, ROLE_NAMES[s]||s]);
+      makeSelect('Option target', targetOptions, customRun.optionTarget, (val)=>{
+        customRun.optionTarget = val;
+        logEvent('option_target_select', {context:'classic', slot: val});
+        regenerateCustomRun();
+        drawRoutePreviews();
+        render();
+      });
+    }
   }
 
   // ---------- custom defense builder ----------
@@ -2231,13 +4854,26 @@
     });
   }
 
+  // Every play's ball movement is a chain of one or more hand-offs/throws —
+  // static plays still carry a single legacy `throw` object, customPass is
+  // always one hop, customRun is one hop normally and two when an option
+  // pass is live. This normalizes either shape to an array so the three
+  // functions below don't each need their own fallback.
+  function throwChain(play){
+    return play.throws || (play.throw ? [play.throw] : []);
+  }
+
   function drawPlayers(){
     playerLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
     const def = DEFENSES[currentDefense];
     const offenseTappable = interactionMode === 'tap' && (currentPlay === 'customPass' || currentPlay === 'customRun');
     const defenseTappable = interactionMode === 'tap' && currentDefense === 'customDefense';
-    const carrierSlot = play.throw ? play.throw.to : null;
+    const throws = throwChain(play);
+    // Highlight whoever ends up with the ball at the end of the chain — the
+    // real carrier normally, or the option target on a play where the pass
+    // gets thrown. Fixed for the whole play, same as it always was.
+    const carrierSlot = throws.length ? throws[throws.length-1].to : null;
 
     Object.keys(play.routes).forEach(key=>{
       const pos = getPosAtT(play.routes[key], t);
@@ -2284,23 +4920,52 @@
   function drawBall(){
     ballLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
-    const th = play.throw;
-    if (!th) return;
-    if (t < th.t0){
-      // ball with QB
-      const qbPos = getPosAtT(play.routes.QB, t);
-      ballLayer.appendChild(el('circle',{cx:qbPos.x+10, cy:qbPos.y, r:4, fill:'var(--flag-gold)'}));
-    } else if (t <= th.t1){
-      const local = (t - th.t0) / (th.t1 - th.t0 || 1);
-      const fromPos = getPosAtT(play.routes[th.from], th.t0);
-      const toPos = getPosAtT(play.routes[th.to], th.t1);
-      const arc = th.type === 'handoff' ? 0 : 30; // handoffs travel flat, passes arc
-      const bx = fromPos.x + (toPos.x - fromPos.x) * local;
-      const by = fromPos.y + (toPos.y - fromPos.y) * local - Math.sin(local*Math.PI)*arc;
-      ballLayer.appendChild(el('circle',{cx:bx, cy:by, r:5, fill:'var(--flag-gold)', stroke:'#7a5c12','stroke-width':1}));
-    } else {
-      const pos = getPosAtT(play.routes[th.to], t);
-      ballLayer.appendChild(el('circle',{cx:pos.x-16, cy:pos.y, r:4, fill:'var(--flag-gold)'}));
+    const throws = throwChain(play);
+    if (throws.length){
+      const first = throws[0];
+      if (t < first.t0){
+        // ball with the original holder (QB, on every play we have today)
+        const holderPos = getPosAtT(play.routes[first.from], t);
+        ballLayer.appendChild(el('circle',{cx:holderPos.x+10, cy:holderPos.y, r:4, fill:'var(--flag-gold)'}));
+      } else {
+        let drawn = false;
+        for (const th of throws){
+          if (t <= th.t1){
+            if (t >= th.t0){
+              // in flight for this hop
+              const local = (t - th.t0) / (th.t1 - th.t0 || 1);
+              const fromPos = getPosAtT(play.routes[th.from], th.t0);
+              const toPos = getPosAtT(play.routes[th.to], th.t1);
+              const arc = th.type === 'handoff' ? 0 : 30; // handoffs travel flat, passes arc
+              const bx = fromPos.x + (toPos.x - fromPos.x) * local;
+              const by = fromPos.y + (toPos.y - fromPos.y) * local - Math.sin(local*Math.PI)*arc;
+              ballLayer.appendChild(el('circle',{cx:bx, cy:by, r:5, fill:'var(--flag-gold)', stroke:'#7a5c12','stroke-width':1}));
+            } else {
+              // between hops — ball is held by whoever caught the previous one
+              const pos = getPosAtT(play.routes[th.from], t);
+              ballLayer.appendChild(el('circle',{cx:pos.x-16, cy:pos.y, r:4, fill:'var(--flag-gold)'}));
+            }
+            drawn = true;
+            break;
+          }
+        }
+        if (!drawn){
+          // after the last hop lands
+          const last = throws[throws.length-1];
+          const pos = getPosAtT(play.routes[last.to], t);
+          ballLayer.appendChild(el('circle',{cx:pos.x-16, cy:pos.y, r:4, fill:'var(--flag-gold)'}));
+        }
+      }
+    }
+
+    // Ghost ball on the decoy selling a fake — cosmetic only, appears in a
+    // short window around the real exchange, never implies real possession.
+    if (play.fakeSlot && play.routes[play.fakeSlot] && throws.length){
+      const first = throws[0];
+      if (t >= first.t0 && t <= first.t1 + 0.15){
+        const fpos = getPosAtT(play.routes[play.fakeSlot], t);
+        ballLayer.appendChild(el('circle',{cx:fpos.x-16, cy:fpos.y, r:4, fill:'var(--flag-gold)', opacity:0.35, 'stroke-dasharray':'2,2'}));
+      }
     }
   }
 
@@ -2326,18 +4991,29 @@
     readLayer.appendChild(g);
   }
 
+  // Single source of truth for "what's happening at this instant" — used by
+  // both the on-screen phase badge and the trajectory export, so the export
+  // can never show a different story than what the animation actually does.
+  // Every throw type (handoff, toss, pass) goes through the exact same
+  // t0/t1 window check; the label differs only in wording.
+  function phaseAtT(play, tVal){
+    if (tVal <= 0.02) return 'Pre-snap';
+    if (tVal >= 0.98) return 'Play over';
+    let active = null;
+    for (const r of play.reads){ if (tVal >= r.t) active = r; }
+    const throws = throwChain(play);
+    for (const th of throws){
+      const isHandoff = th.type === 'handoff';
+      if (tVal >= th.t0 && tVal <= th.t1) return isHandoff ? 'Handoff' : (th.type === 'toss' ? 'Toss in the air' : 'Ball in the air');
+    }
+    const last = throws[throws.length-1];
+    if (last && tVal > last.t1) return last.type === 'handoff' ? 'Ball carrier running' : 'Yards after catch';
+    return active ? active.label : 'Snap!';
+  }
+
   function updatePhaseBadge(){
     const play = PLAYS[currentPlay];
-    const badge = document.getElementById('phaseBadge');
-    if (t <= 0.02) { badge.textContent = 'Pre-snap'; return; }
-    if (t >= 0.98) { badge.textContent = 'Play over'; return; }
-    let active = null;
-    for (const r of play.reads){ if (t >= r.t) active = r; }
-    const th = play.throw;
-    const isHandoff = th && th.type === 'handoff';
-    if (th && t >= th.t0 && t <= th.t1){ badge.textContent = isHandoff ? 'Handoff' : 'Ball in the air'; return; }
-    if (th && t > th.t1){ badge.textContent = isHandoff ? 'Ball carrier running' : 'Yards after catch'; return; }
-    badge.textContent = active ? active.label : 'Snap!';
+    document.getElementById('phaseBadge').textContent = phaseAtT(play, t);
   }
 
   function render(){
@@ -2345,8 +5021,106 @@
     drawBall();
     drawReadBadge();
     updatePhaseBadge();
+    updateCoordsPanel();
     document.getElementById('scrub').value = Math.round(t*1000);
   }
+
+  // Live position readout — yards behind/past the LOS and yards left/right
+  // of center, for every offensive player in the current play, at whatever
+  // moment (t) is currently shown. Pause or step to the exact spot you want
+  // to describe, toggle this on, and read the numbers straight off it —
+  // no need to eyeball pixels off a screenshot. Off by default.
+  let showCoords = false;
+  function updateCoordsPanel(){
+    const panel = document.getElementById('coordsPanel');
+    if (!showCoords) return;
+    const play = PLAYS[currentPlay];
+    const carrierSlot = (throwChain(play).length ? throwChain(play)[throwChain(play).length-1].to : null);
+    const rows = Object.keys(play.routes).map(key=>{
+      const pos = getPosAtT(play.routes[key], t);
+      const depthYd = (LOS_X - pos.x) / YARD_PX;
+      const widthYd = (pos.y - CENTER_Y) / YARD_PX;
+      const depthLabel = depthYd >= -0.05
+        ? Math.abs(depthYd).toFixed(1) + ' behind LOS'
+        : Math.abs(depthYd).toFixed(1) + ' past LOS';
+      const widthLabel = Math.abs(widthYd).toFixed(1) + ' ' + (widthYd >= 0 ? 'R' : 'L') + ' of C';
+      const label = OFF_LABELS[key] || key;
+      const cls = key === carrierSlot ? ' class="coords-carrier"' : '';
+      return `<div${cls}>${label}: ${depthLabel}, ${widthLabel}</div>`;
+    }).join('');
+    panel.innerHTML = `<div class="coords-title">t=${t.toFixed(2)} (yards)</div>${rows}`;
+  }
+  document.getElementById('coordsToggleBtn').onclick = ()=>{
+    showCoords = !showCoords;
+    document.getElementById('coordsToggleBtn').classList.toggle('active', showCoords);
+    document.getElementById('coordsPanel').style.display = showCoords ? 'block' : 'none';
+    render();
+  };
+
+  // Full-trajectory export — the 📍 readout only ever shows one instant, so
+  // describing a whole path by hand meant scrubbing to each moment and
+  // copying it down one at a time (slow, and the scrub slider isn't
+  // precise enough to land exactly on t=0.02, 0.10, etc.). This dumps
+  // every offensive player's position at a fine, regular set of moments
+  // in one shot — same yards-from-LOS / yards-from-center units as the
+  // live readout — so it can be pasted straight into a sheet instead.
+  function buildTrajectoryCSV(){
+    const play = PLAYS[currentPlay];
+    const carrierSlot = (throwChain(play).length ? throwChain(play)[throwChain(play).length-1].to : null);
+    // phase reuses the exact same function driving the on-screen badge, so
+    // "when does the ball actually move" is read off the data itself
+    // instead of guessed from watching the animation — same source of
+    // truth for handoffs, tosses, and passes alike.
+    const lines = ['t,player,carrier,yd_behind_LOS,yd_right_of_C,phase'];
+    for (let i = 0; i <= 50; i++){
+      const st = i / 50;
+      const phase = phaseAtT(play, st);
+      Object.keys(play.routes).forEach(key=>{
+        const pos = getPosAtT(play.routes[key], st);
+        const depthYd = (LOS_X - pos.x) / YARD_PX;
+        const widthYd = (pos.y - CENTER_Y) / YARD_PX;
+        const label = OFF_LABELS[key] || key;
+        lines.push([st.toFixed(2), label, key===carrierSlot?'yes':'', depthYd.toFixed(2), widthYd.toFixed(2), phase].join(','));
+      });
+    }
+    return lines.join('\n');
+  }
+  // Plain-language readout of every throw/handoff/toss window in the current
+  // play — the exact t0/t1 numbers that drive the "phase" column above, so
+  // they don't have to be found by scanning rows.
+  function buildThrowsSummary(){
+    const play = PLAYS[currentPlay];
+    const throws = throwChain(play);
+    if (!throws.length) return 'No throws/handoffs in this play.';
+    const verb = {handoff:'Handoff', toss:'Toss', pass:'Pass'};
+    return throws.map(th=>{
+      const fromLabel = OFF_LABELS[th.from] || th.from;
+      const toLabel = OFF_LABELS[th.to] || th.to;
+      const kind = verb[th.type] || th.type;
+      return `${kind}: ${fromLabel} → ${toLabel}, t0=${th.t0.toFixed(2)}, t1=${th.t1.toFixed(2)} (ball in the air/hands moving across this window)`;
+    }).join('  |  ');
+  }
+  document.getElementById('exportTrajectoryBtn').onclick = ()=>{
+    document.getElementById('trajectoryExportText').value = buildTrajectoryCSV();
+    document.getElementById('trajectoryThrowsSummary').textContent = buildThrowsSummary();
+    document.getElementById('trajectorySheetBackdrop').style.display = 'flex';
+    logEvent('trajectory_export', {play: currentPlay});
+  };
+  document.getElementById('trajectoryCloseBtn').onclick = ()=>{
+    document.getElementById('trajectorySheetBackdrop').style.display = 'none';
+  };
+  document.getElementById('trajectoryCopyBtn').onclick = ()=>{
+    const ta = document.getElementById('trajectoryExportText');
+    ta.select();
+    ta.setSelectionRange(0, 999999);
+    const btn = document.getElementById('trajectoryCopyBtn');
+    const done = ()=>{ const orig = btn.textContent; btn.textContent = 'Copied!'; setTimeout(()=>{ btn.textContent = orig; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(ta.value).then(done).catch(()=>{ /* selection above still lets manual copy work */ });
+    } else {
+      try { document.execCommand('copy'); done(); } catch(e){ /* selection above still lets manual copy work */ }
+    }
+  };
 
   function setPlay(key){
     currentPlay = key;
@@ -2559,6 +5333,14 @@
     labelsObj[b] = tmp;
   }
 
+  // Flips a single slot-key reference (goesTo/fakeSlot/optionTarget) when
+  // its two sides swap, so a flip never silently loses who's faking or who
+  // the option target is.
+  function swapSlotRef(obj, field, a, b){
+    if (obj[field] === a) obj[field] = b;
+    else if (obj[field] === b) obj[field] = a;
+  }
+
   function flipActiveFormation(){
     if (currentPlay === 'customPass'){
       logEvent('flip', {context:'customPass', formation:customPass.formation});
@@ -2578,16 +5360,18 @@
       if (customRun.formation === 'proSet'){
         customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
         const tmp = customRun.paths.RB_L; customRun.paths.RB_L = customRun.paths.RB_R; customRun.paths.RB_R = tmp;
-        if (customRun.goesTo === 'RB_L') customRun.goesTo = 'RB_R';
-        else if (customRun.goesTo === 'RB_R') customRun.goesTo = 'RB_L';
+        swapSlotRef(customRun, 'goesTo', 'RB_L', 'RB_R');
+        swapSlotRef(customRun, 'fakeSlot', 'RB_L', 'RB_R');
+        swapSlotRef(customRun, 'optionTarget', 'RB_L', 'RB_R');
         swapAssignment('RB_L', 'RB_R');
         swapLabel(customRun.labels, 'RB_L', 'RB_R');
       } else if (customRun.formation === 'trips'){
         customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
       } else {
         const tmp = customRun.paths.WR_L; customRun.paths.WR_L = customRun.paths.WR_R; customRun.paths.WR_R = tmp;
-        if (customRun.goesTo === 'WR_L') customRun.goesTo = 'WR_R';
-        else if (customRun.goesTo === 'WR_R') customRun.goesTo = 'WR_L';
+        swapSlotRef(customRun, 'goesTo', 'WR_L', 'WR_R');
+        swapSlotRef(customRun, 'fakeSlot', 'WR_L', 'WR_R');
+        swapSlotRef(customRun, 'optionTarget', 'WR_L', 'WR_R');
         swapAssignment('WR_L', 'WR_R');
         swapLabel(customRun.labels, 'WR_L', 'WR_R');
       }
@@ -2620,7 +5404,11 @@
   // state through the exact same regenerate functions — this is a true
   // A/B of the *interaction*, not two separate builders to keep in sync.
   let interactionMode = 'classic';  // 'classic' | 'tap'
-  let tapSubMode = 'pass';          // 'pass' | 'run' — offense only
+  // Pre-designed plays (static PLAYS entries) — the only offense option in
+  // Tap to Assign now that the Pass/Run custom builder has moved out of
+  // this view. Add a play's key here as each one gets built.
+  const TAP_DESIGNED_PLAYS = ['power', 'flySweep', 'quickToss', 'drawDelay', 'crissCross', 'optionPass', 'tripsInsideScreen', 'paFakePower'];
+  let tapDesignedPlay = null;       // key into TAP_DESIGNED_PLAYS
 
   function setInteractionMode(mode){
     interactionMode = mode;
@@ -2637,9 +5425,11 @@
     const defenseLineupDetails = document.getElementById('defenseLineupDetails');
 
     if (mode === 'tap'){
-      // Force the live play/defense to whichever custom one this tap
-      // session is building, so there's always something tappable.
-      setPlay(tapSubMode === 'pass' ? 'customPass' : 'customRun');
+      // Offense side only shows pre-designed plays now — default to the
+      // first one (or keep whichever was already picked) so there's
+      // always a play loaded.
+      if (!tapDesignedPlay) tapDesignedPlay = TAP_DESIGNED_PLAYS[0];
+      setPlay(tapDesignedPlay);
       setDefense('customDefense');
       builderDetails.style.display = 'none';
       runBuilderDetails.style.display = 'none';
@@ -2676,47 +5466,31 @@
     panel.appendChild(editRosterBtn);
 
     if (currentMode === 'offense'){
-      const subWrap = document.createElement('div');
-      subWrap.style.display = 'flex'; subWrap.style.gap = '6px';
-      [['pass','Pass'],['run','Run']].forEach(([sub,label])=>{
-        const b = document.createElement('button');
-        b.className = 'subtoggle-btn' + (tapSubMode===sub ? ' active' : '');
-        b.textContent = label;
-        b.onclick = ()=>{
-          tapSubMode = sub;
-          logEvent('tap_submode_select', {mode:sub});
-          setPlay(sub === 'pass' ? 'customPass' : 'customRun');
-          buildTapControls();
-          drawRoutePreviews();
-          render();
-        };
-        subWrap.appendChild(b);
-      });
-      panel.appendChild(subWrap);
+      if (TAP_DESIGNED_PLAYS.length){
+        const designedWrap = document.createElement('div');
+        designedWrap.style.display = 'flex'; designedWrap.style.gap = '6px'; designedWrap.style.flexWrap = 'wrap';
+        TAP_DESIGNED_PLAYS.forEach(key=>{
+          const b = document.createElement('button');
+          b.className = 'subtoggle-btn' + (tapDesignedPlay===key ? ' active' : '');
+          b.textContent = PLAYS[key].name;
+          b.onclick = ()=>{
+            tapDesignedPlay = key;
+            logEvent('play_tab_select', {play:key, context:'tap'});
+            setPlay(key);
+            buildTapControls();
+            drawRoutePreviews();
+            render();
+          };
+          designedWrap.appendChild(b);
+        });
+        panel.appendChild(designedWrap);
+      }
 
-      const activeCustom = tapSubMode === 'pass' ? customPass : customRun;
-      const formWrap = document.createElement('div');
-      formWrap.style.display = 'flex'; formWrap.style.gap = '6px';
-      Object.keys(FORMATIONS).forEach(fKey=>{
-        const b = document.createElement('button');
-        b.className = 'formation-btn' + (activeCustom.formation===fKey ? ' active' : '');
-        b.textContent = FORMATIONS[fKey].name;
-        b.onclick = ()=>{
-          activeCustom.formation = fKey;
-          logEvent('formation_select', {context:'tap', subMode:tapSubMode, formation:fKey});
-          if (tapSubMode === 'pass'){ customPass.routes = {}; customPass.target = null; regenerateCustomPass(); buildBuilderPanel(); }
-          else { customRun.paths = {}; customRun.goesTo = null; regenerateCustomRun(); buildRunBuilderPanel(); }
-          drawRoutePreviews();
-          buildTapControls();
-          render();
-        };
-        formWrap.appendChild(b);
-      });
-      panel.appendChild(formWrap);
-
+      // Pre-designed plays are fixed data — nothing left to tap-edit once
+      // one's picked, just pick a different play above to compare.
       const hint = document.createElement('div');
       hint.className = 'tap-hint';
-      hint.textContent = 'Tap a player on the field to assign their ' + (tapSubMode === 'pass' ? 'route.' : 'action.');
+      hint.textContent = 'Pick a play above to load it.';
       panel.appendChild(hint);
     } else {
       const hint = document.createElement('div');
@@ -2795,6 +5569,50 @@
     sheet.appendChild(b);
   }
 
+  // "Sells the fake" toggle — cosmetic decoy flag for a run-play slot that
+  // isn't the real carrier. Same shape as renderSheetBallToggle on purpose.
+  function renderSheetFakeToggle(sheet, isCurrent, setCurrent){
+    const lbl = document.createElement('div');
+    lbl.className = 'assign-group-label';
+    lbl.textContent = 'Fake';
+    sheet.appendChild(lbl);
+    const b = document.createElement('button');
+    b.className = 'assign-option-btn' + (isCurrent() ? ' current' : '');
+    b.style.width = '100%';
+    b.textContent = isCurrent() ? '🎭 Sells the fake' : 'Sells the fake?';
+    b.onclick = ()=>{ setCurrent(); rerenderSheetBody(); };
+    sheet.appendChild(b);
+  }
+
+  // "Option to pass" — lives on the sheet for whichever slot is the real
+  // carrier. Toggling it on reveals a target picker among the other slots.
+  function renderSheetOptionControls(sheet, formation, carrierSlot){
+    const lbl = document.createElement('div');
+    lbl.className = 'assign-group-label';
+    lbl.textContent = 'Option';
+    sheet.appendChild(lbl);
+    const b = document.createElement('button');
+    b.className = 'assign-option-btn' + (customRun.optionEnabled ? ' current' : '');
+    b.style.width = '100%';
+    b.textContent = customRun.optionEnabled ? '🎯 Can pull up and pass' : 'Can pull up and pass?';
+    b.onclick = ()=>{
+      customRun.optionEnabled = !customRun.optionEnabled;
+      if (customRun.optionEnabled && !customRun.optionTarget){
+        customRun.optionTarget = formation.wrSlots.find(s => s !== carrierSlot) || null;
+      }
+      logEvent('option_toggle', {context:'tap', enabled: customRun.optionEnabled});
+      rerenderSheetBody();
+    };
+    sheet.appendChild(b);
+    if (customRun.optionEnabled){
+      const targetOptions = formation.wrSlots.filter(s => s !== carrierSlot).map(s=>({value:s, label:ROLE_NAMES[s]||s}));
+      renderSheetOptionGroups(sheet, ROLE_NAMES[customRun.optionTarget]||customRun.optionTarget||'',
+        [{label:'Pass to:', options: targetOptions}],
+        customRun.optionTarget,
+        (val)=>{ customRun.optionTarget = val; logEvent('option_target_select', {context:'tap', slot: val}); });
+    }
+  }
+
   // Re-draws just the sheet's contents (not the backdrop) so repeated
   // taps inside one sheet visit don't require re-opening it.
   let currentSheetRender = null;
@@ -2848,6 +5666,16 @@
             currentVal,
             (val)=>{ customRun.paths[slot] = val; logEvent('run_path_select', {context:'tap', slot, value:val}); });
           renderSheetBallToggle(sheet, ()=> customRun.goesTo === slot, ()=>{ customRun.goesTo = slot; logEvent('ball_carrier_set', {context:'run_tap', slot}); });
+          if (customRun.goesTo === slot){
+            // this slot IS the real carrier — offer the option to pass instead of running it out
+            renderSheetOptionControls(sheet, FORMATIONS[customRun.formation], slot);
+          } else {
+            // any other slot can be flagged as the decoy selling the fake
+            renderSheetFakeToggle(sheet, ()=> customRun.fakeSlot === slot, ()=>{
+              customRun.fakeSlot = (customRun.fakeSlot === slot) ? null : slot;
+              logEvent('fake_slot_select', {context:'tap', slot: customRun.fakeSlot});
+            });
+          }
         }
       } else {
         // customPass
@@ -2896,6 +5724,8 @@
       offenseDetail.qbAction = customRun.qbAction;
       offenseDetail.paths = Object.assign({}, customRun.paths);
       offenseDetail.goesTo = customRun.goesTo;
+      if (customRun.fakeSlot) offenseDetail.fakeSlot = customRun.fakeSlot;
+      if (customRun.optionEnabled) offenseDetail.option = { target: customRun.optionTarget };
     }
     const defenseDetail = { defense: currentDefense };
     if (currentDefense === 'customDefense'){
@@ -3049,6 +5879,28 @@
   // on one.
   setInteractionMode('tap');
   document.getElementById('setupDetails').open = false;
+
+  // ---------- click-outside to close Setup ----------
+  // Tapping anywhere outside the Setup panel collapses it (keeping
+  // whatever was selected) instead of requiring another click on the
+  // "Setup" summary itself. Clicks inside one of the modal sheets
+  // (roster editor, trajectory export, tap-to-assign popup) don't count
+  // as "outside" even though those render outside the <details> in the
+  // DOM — they're still part of using Setup.
+  // Registered on the CAPTURE phase, not bubble: several controls inside
+  // Setup (Power/Pass/Run, formation buttons) rebuild the panel via
+  // innerHTML on click, which detaches the clicked element from the DOM
+  // while the event is still bubbling. A bubble-phase listener would then
+  // see e.target as "not contained" in setupDetails (it's detached) and
+  // wrongly treat an inside click as outside. Running in capture means
+  // this check happens before any handler has a chance to mutate the DOM.
+  document.addEventListener('click', (e)=>{
+    const setupDetails = document.getElementById('setupDetails');
+    if (!setupDetails.open) return;
+    if (setupDetails.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.assign-sheet-backdrop')) return;
+    setupDetails.open = false;
+  }, true);
 
   // ---------- offline caching ----------
   // Registers a service worker so, after the first successful load,
