@@ -418,6 +418,12 @@
   .tappable circle{ transition: stroke-width .12s ease, filter .12s ease; }
   .tappable:hover circle, .tappable:active circle{ filter: drop-shadow(0 0 4px var(--flag-gold)); }
 
+  /* draggable pre-snap alignment affordance (Classic, custom Pass/Run) */
+  .draggable-player{ cursor:grab; touch-action:none; }
+  .draggable-player circle{ transition: filter .12s ease; }
+  .draggable-player:hover circle{ filter: drop-shadow(0 0 5px var(--chalk)); }
+  .draggable-player:active{ cursor:grabbing; }
+
   .assign-sheet-backdrop{
     position:fixed; inset:0;
     background:rgba(0,0,0,0.5);
@@ -4222,19 +4228,55 @@
     RB_R: '#f06fa0', RB: '#f06fa0', WR3: '#f06fa0', WR_S: '#f06fa0'
   };
 
+  // Same idea as OFF_ROUTE_COLORS, keyed by "position slot" so a defender
+  // keeps its color across the three defensive schemes even though the
+  // literal slot names differ (cover2's S1/manFree's RUSH/custom's LB_R
+  // never appear together, so they can safely share a color). Tap to
+  // Assign only, for now — Classic keeps the original uniform def-blue.
+  const DEF_ROUTE_COLORS = {
+    CB_L: '#5b9bd1',
+    CB_R: '#41c7e0',
+    NB: '#8b7fe8', LB_L: '#8b7fe8',
+    S1: '#d17fe0', RUSH: '#d17fe0', LB_R: '#d17fe0',
+    S2: '#e0629c', FS: '#e0629c', S: '#e0629c'
+  };
+
   function drawRoutePreviews(){
     routeLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
     const def = DEFENSES[currentDefense];
-    Object.keys(play.routes).forEach(key=>{
-      if (key === 'QB') return; // don't show QB drop as a "route"
-      const p = el('path',{d:pathFromWaypoints(play.routes[key]), fill:'none',
-        stroke:OFF_ROUTE_COLORS[key] || 'var(--off-red)','stroke-width':4,'stroke-dasharray':'5,5','opacity':0.85});
-      routeLayer.appendChild(p);
-    });
+    const tap = interactionMode === 'tap';
+    const viewingDefenseFlipped = currentMode === 'defense' && fieldFlipped;
+    // Tap to Assign, viewing Defense, with the field flipped to the
+    // defense's perspective: drop the offense's routes so the sheet isn't
+    // cluttered with plays running "backwards" on screen. Revisit this
+    // once we've lived with it a bit.
+    const hideOffense = tap && viewingDefenseFlipped;
+    // Classic, same situation: keep the offense's routes as a faded
+    // reference instead of hiding them — Classic's the tool for walking
+    // through what the defense should do against a specific play, so the
+    // play itself still needs to be visible, just clearly secondary to
+    // the defenders now drawn on top of it.
+    const dimOffense = !tap && viewingDefenseFlipped;
+    // Same trigger as the offense dim — this is the moment the defense's
+    // routes need to grab the eye, in Classic same as Tap to Assign, so
+    // give them the same bold/colored treatment there too.
+    const boldDefense = tap || viewingDefenseFlipped;
+    if (!hideOffense){
+      Object.keys(play.routes).forEach(key=>{
+        if (key === 'QB') return; // don't show QB drop as a "route"
+        const p = el('path',{d:pathFromWaypoints(play.routes[key]), fill:'none',
+          stroke:OFF_ROUTE_COLORS[key] || 'var(--off-red)','stroke-width':4,'stroke-dasharray':'5,5',
+          'opacity': dimOffense ? 0.22 : 0.85});
+        routeLayer.appendChild(p);
+      });
+    }
     Object.keys(def.routes).forEach(key=>{
       const p = el('path',{d:pathFromWaypoints(def.routes[key]), fill:'none',
-        stroke:'var(--def-blue)','stroke-width':4,'stroke-dasharray':'2,5','opacity':0.6});
+        stroke: boldDefense ? (DEF_ROUTE_COLORS[key] || 'var(--def-blue)') : 'var(--def-blue)',
+        'stroke-width': boldDefense ? 6 : 4,
+        'stroke-dasharray':'2,5',
+        'opacity': boldDefense ? 0.85 : 0.6});
       routeLayer.appendChild(p);
     });
   }
@@ -4308,13 +4350,63 @@
     flexSide: 'L',              // which side the flexible WR(s) line up — Pro Set / Trips only
     routes: {},                // slot key -> route name, e.g. { WR_L:'slant', WR_R:'flatRight' }
     target: null,                // slot key the QB throws to
-    labels: {}                  // slot key -> displayed letter, swapped on flip so a flip is
+    labels: {},                 // slot key -> displayed letter, swapped on flip so a flip is
                                  // always visible even with no roster names assigned yet
+    startOverride: {}           // slot key -> {x,y}, set by dragging a player pre-snap to show
+                                 // an odd look instead of the formation's stock alignment
   };
+
+  // Merges any manually-dragged starting spots into a formation's stock
+  // positions — same shape/keys either way, so every downstream call site
+  // (route generation, the RB_L/RB_R/QB lookups in the run builder, etc.)
+  // reads through this and never needs to know an override exists.
+  function positionsWithOverride(formation, flexSide, overrides){
+    const base = formation.positions(flexSide);
+    const out = {};
+    Object.keys(base).forEach(slot=>{
+      const o = overrides[slot];
+      out[slot] = o ? Object.assign({}, base[slot], {x:o.x, y:o.y}) : base[slot];
+    });
+    return out;
+  }
+
+  // Small hint + reset button shared by the Pass and Run builder panels —
+  // tells the coach how to nudge alignment, and only shows "Reset
+  // Alignment" once something's actually been dragged off the formation's
+  // stock spot.
+  function buildAlignmentHint(obj){
+    const wrap = document.createElement('div');
+    wrap.className = 'tap-hint';
+    wrap.style.display = 'flex';
+    wrap.style.alignItems = 'center';
+    wrap.style.justifyContent = 'space-between';
+    wrap.style.gap = '10px';
+    wrap.style.margin = '2px 0 4px';
+    const label = document.createElement('span');
+    label.textContent = 'Drag a player on the field, pre-snap, to show an odd alignment.';
+    wrap.appendChild(label);
+    if (Object.keys(obj.startOverride).length){
+      const btn = document.createElement('button');
+      btn.className = 'assign-sheet-close';
+      btn.style.width = 'auto'; btn.style.padding = '6px 14px'; btn.style.marginTop = '0'; btn.style.flexShrink = '0';
+      btn.textContent = 'Reset Alignment';
+      btn.onclick = ()=>{
+        obj.startOverride = {};
+        const isPass = obj === customPass;
+        logEvent('alignment_reset', {context: isPass ? 'customPass' : 'customRun'});
+        if (isPass) regenerateCustomPass(); else regenerateCustomRun();
+        drawRoutePreviews();
+        if (isPass) buildBuilderPanel(); else buildRunBuilderPanel();
+        render();
+      };
+      wrap.appendChild(btn);
+    }
+    return wrap;
+  }
 
   function regenerateCustomPass(){
     const formation = FORMATIONS[customPass.formation];
-    const positions = formation.positions(customPass.flexSide);
+    const positions = positionsWithOverride(formation, customPass.flexSide, customPass.startOverride);
     const routes = {};
 
     Object.keys(positions).forEach(slot=>{
@@ -4365,6 +4457,7 @@
       customPass.formation = fSelect.value;
       customPass.routes = {};
       customPass.target = null;
+      customPass.startOverride = {};
       logEvent('formation_select', {context:'customPass', formation:fSelect.value});
       regenerateCustomPass();
       drawRoutePreviews();
@@ -4374,6 +4467,8 @@
     };
     fChip.appendChild(fRole); fChip.appendChild(fSelect);
     panel.appendChild(fChip);
+
+    panel.appendChild(buildAlignmentHint(customPass));
 
     // route selector per WR slot
     formation.wrSlots.forEach(slot=>{
@@ -4430,14 +4525,16 @@
     fakeSlot: null,              // optional: slot key that sells a decoy carry (cosmetic only — never gets the real ball)
     optionEnabled: false,        // does the real carrier have the option to pull up and pass?
     optionTarget: null,          // slot key the carrier throws to if the option is used
-    labels: {}                  // slot key -> displayed letter, swapped on flip
+    labels: {},                 // slot key -> displayed letter, swapped on flip
+    startOverride: {}           // slot key -> {x,y}, set by dragging a player pre-snap to show
+                                 // an odd look instead of the formation's stock alignment
   };
 
   function pathDefFor(key){ return RUN_PATH_KEYS.includes(key) ? RUN_PATHS[key] : ROUTES[key]; }
 
   function regenerateCustomRun(){
     const formation = FORMATIONS[customRun.formation];
-    const positions = formation.positions(customRun.flexSide);
+    const positions = positionsWithOverride(formation, customRun.flexSide, customRun.startOverride);
     const slots = formation.wrSlots; // all non-QB assignable slots
     const routes = {};
 
@@ -4715,12 +4812,15 @@
       customRun.formation = val;
       customRun.paths = {};
       customRun.goesTo = null;
+      customRun.startOverride = {};
       regenerateCustomRun();
       drawRoutePreviews();
       buildRunBuilderPanel();
       buildLineupPanel();
       render();
     });
+
+    panel.appendChild(buildAlignmentHint(customRun));
 
     // QB action
     makeSelect('QB Action', Object.keys(QB_ACTION_LABELS).map(k=>[k,QB_ACTION_LABELS[k]]), customRun.qbAction, (val)=>{
@@ -4878,12 +4978,68 @@
     return play.throws || (play.throw ? [play.throw] : []);
   }
 
+  // ---------- pre-snap alignment drag (Classic, custom Pass/Run) ----------
+  // Converts a pointer's screen position into the same field-space
+  // coordinates every route's waypoints are stored in (i.e. rotateGroup's
+  // own local space, before its flip/rotate transform is applied) — so a
+  // dropped point can be written straight into startOverride and fed back
+  // into positionsWithOverride with no further conversion.
+  function fieldPointFromEvent(e){
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const ctm = rotateGroup.getScreenCTM();
+    if (!ctm) return {x:0, y:0};
+    const local = pt.matrixTransform(ctm.inverse());
+    return {x: local.x, y: local.y};
+  }
+
+  // Listeners live on window rather than the dragged <g> itself — drawPlayers()
+  // rebuilds every player marker from scratch on each regenerate, which
+  // would otherwise orphan a pointer capture set on the old node mid-drag.
+  let alignDragSlot = null, alignDragObj = null;
+  function onAlignmentPointerMove(e){
+    if (!alignDragSlot) return;
+    const p = fieldPointFromEvent(e);
+    alignDragObj.startOverride[alignDragSlot] = {x:p.x, y:p.y};
+    if (alignDragObj === customPass) regenerateCustomPass(); else regenerateCustomRun();
+    drawRoutePreviews();
+    render();
+  }
+  function onAlignmentPointerUp(){
+    if (!alignDragSlot) return;
+    logEvent('alignment_drag', {context: alignDragObj === customPass ? 'customPass' : 'customRun', slot: alignDragSlot});
+    if (alignDragObj === customPass) buildBuilderPanel(); else buildRunBuilderPanel();
+    alignDragSlot = null; alignDragObj = null;
+    window.removeEventListener('pointermove', onAlignmentPointerMove);
+    window.removeEventListener('pointerup', onAlignmentPointerUp);
+    window.removeEventListener('pointercancel', onAlignmentPointerUp);
+  }
+  function startAlignmentDrag(e, slot){
+    e.preventDefault();
+    alignDragSlot = slot;
+    alignDragObj = currentPlay === 'customPass' ? customPass : customRun;
+    window.addEventListener('pointermove', onAlignmentPointerMove);
+    window.addEventListener('pointerup', onAlignmentPointerUp);
+    window.addEventListener('pointercancel', onAlignmentPointerUp);
+  }
+
   function drawPlayers(){
     playerLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
     const def = DEFENSES[currentDefense];
-    const offenseTappable = interactionMode === 'tap' && (currentPlay === 'customPass' || currentPlay === 'customRun');
+    // Tap to Assign, offense: every offense play there is one of the fixed
+    // designed plays now (never customPass/customRun — see
+    // setInteractionMode), so any position can be tapped to assign who's
+    // playing it. openAssignSheet() itself branches on currentPlay to show
+    // just the roster picker for a designed play, vs. the full route/QB
+    // controls for a custom one.
+    const offenseTappable = interactionMode === 'tap';
     const defenseTappable = interactionMode === 'tap' && currentDefense === 'customDefense';
+    // Classic, offense, custom Pass/Run, pre-snap only: drag a player to a
+    // new spot to show an odd alignment instead of the formation's stock
+    // one. Restricted to t===0 so you're always dragging from — and can
+    // see — the true starting spot, not some mid-route position.
+    const offenseDraggable = interactionMode === 'classic' && (currentPlay === 'customPass' || currentPlay === 'customRun') && t === 0;
     const throws = throwChain(play);
     // Highlight whoever ends up with the ball at the end of the chain — the
     // real carrier normally, or the option target on a play where the pass
@@ -4908,6 +5064,10 @@
       if (offenseTappable){
         g.classList.add('tappable');
         g.onclick = ()=> openAssignSheet(key, 'offense');
+      }
+      if (offenseDraggable){
+        g.classList.add('draggable-player');
+        g.addEventListener('pointerdown', (e)=> startAlignmentDrag(e, key));
       }
       playerLayer.appendChild(g);
     });
@@ -5316,6 +5476,7 @@
     document.getElementById('modeDefenseBtn').classList.toggle('active', mode === 'defense');
     buildTapControls();
     updateGlobalFlipVisibility();
+    drawRoutePreviews();
   }
   document.getElementById('modeOffenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'offense'}); setMode('offense'); };
   document.getElementById('modeDefenseBtn').onclick = ()=>{ logEvent('mode_toggle', {mode:'defense'}); setMode('defense'); };
@@ -5359,6 +5520,10 @@
   function flipActiveFormation(){
     if (currentPlay === 'customPass'){
       logEvent('flip', {context:'customPass', formation:customPass.formation});
+      // A dragged alignment is specific to one side of the field — flipping
+      // formation/side out from under it would leave it mirrored wrong, so
+      // just clear it back to the (now-flipped) formation's stock spots.
+      customPass.startOverride = {};
       if (customPass.formation === 'proSet' || customPass.formation === 'trips'){
         customPass.flexSide = customPass.flexSide === 'L' ? 'R' : 'L';
       } else {
@@ -5372,6 +5537,7 @@
       buildBuilderPanel();
     } else if (currentPlay === 'customRun'){
       logEvent('flip', {context:'customRun', formation:customRun.formation});
+      customRun.startOverride = {};
       if (customRun.formation === 'proSet'){
         customRun.flexSide = customRun.flexSide === 'L' ? 'R' : 'L';
         const tmp = customRun.paths.RB_L; customRun.paths.RB_L = customRun.paths.RB_R; customRun.paths.RB_R = tmp;
@@ -5692,8 +5858,7 @@
             });
           }
         }
-      } else {
-        // customPass
+      } else if (currentPlay === 'customPass'){
         renderSheetRoster(sheet, slot, ASSIGNMENTS, ()=>{});
         if (slot === 'QB'){
           const p = document.createElement('p'); p.className = 'assign-current';
@@ -5707,6 +5872,11 @@
             (val)=>{ customPass.routes[slot] = val; logEvent('route_select', {context:'tap', slot, route:val}); });
           renderSheetBallToggle(sheet, ()=> customPass.target === slot, ()=>{ customPass.target = slot; logEvent('throw_target_select', {context:'tap', slot}); });
         }
+      } else {
+        // A fixed/designed play (Tap to Assign, offense) — the play itself
+        // isn't editable here, just who's lined up at this spot. Subs
+        // happen often enough mid-game that this needs to be one tap.
+        renderSheetRoster(sheet, slot, ASSIGNMENTS, ()=>{});
       }
 
       const doneBtn = document.createElement('button');
