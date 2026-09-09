@@ -855,8 +855,8 @@
   // Same defensive pattern as flag-flow-team-sync.html throughout: a
   // dynamic import inside try/catch, so no signal or unconfigured
   // credentials just mean "behaves like solo mode," never a broken page.
-  const SUPABASE_URL = "https://imfwbikmumyitfmqbcxj.supabase.co";
-  const SUPABASE_ANON_KEY = "sb_publishable_7fifS7gsBSwcY6oS9ZDVgg_NfS7qTv0";
+  const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE";
+  const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
   // Shared secret both coaches' copies of this file must agree on — same
   // trust model as Team Sync's team code. Change it if you want, just
   // keep every deployed copy of this file in sync.
@@ -887,13 +887,17 @@
   // Only the offense side of the workflow this was built for is synced —
   // Cody calling positions out loud while Russell sets the play/roster.
   // Defense roster rides along too (same shape, effectively free); which
-  // defensive look is loaded is not synced yet.
+  // defensive look is loaded is not synced yet. The roster itself (the
+  // list of names Edit Roster manages) rides in this same row too, added
+  // 2026-09-09 — same last-write-wins model, so whoever last hit "Save
+  // roster" is the one both devices end up showing.
   function currentSessionSnapshot(){
     return {
       current_play: currentPlay,
       flipped: !!flippedPlays[currentPlay],
       assignments: Object.assign({}, ASSIGNMENTS),
       def_assignments: Object.assign({}, DEF_ASSIGNMENTS),
+      roster: ROSTER.slice(),
     };
   }
 
@@ -922,6 +926,10 @@
         Object.keys(DEF_ASSIGNMENTS).forEach(k=> delete DEF_ASSIGNMENTS[k]);
         Object.assign(DEF_ASSIGNMENTS, row.def_assignments);
       }
+      if (Array.isArray(row.roster)){
+        ROSTER = row.roster;
+        setRoster(ROSTER); // mirror into this device's own localStorage too
+      }
       drawRoutePreviews();
       buildLineupPanel();
       if (typeof buildDefenseLineupPanel === 'function') buildDefenseLineupPanel();
@@ -941,6 +949,7 @@
       const sig = JSON.stringify({
         current_play: data.current_play, flipped: !!data.flipped,
         assignments: data.assignments || {}, def_assignments: data.def_assignments || {},
+        roster: data.roster || [],
       });
       if (sig === lastSyncSignature) return; // it's our own last write, or genuinely unchanged
       applyRemoteState(data);
@@ -4313,8 +4322,8 @@
     }
   },
   "customDefense": {
-    "name": "Custom Defense",
-    "desc": "<b>Custom Defense — 2-2-1.</b> Build your own coverage — assign an action to each of the five defenders.",
+    "name": "Gang Green",
+    "desc": "<b>Gang Green — 2-2-1.</b> Build your own coverage — assign an action to each of the five defenders.",
     "routes": {}
   }
 };
@@ -5072,10 +5081,19 @@
   }
 
   // ---------- custom defense builder ----------
-  const customDefense = { paths: {} }; // slot key -> DEF_PATH_ORDER key
+  const customDefense = {
+    paths: {},          // slot key -> DEF_PATH_ORDER key
+    startOverride: {}   // slot key -> {x,y}, set by dragging a player pre-snap in Tap to
+                         // Assign to show an odd alignment instead of the base 2-2-1 spot
+  };
 
   function regenerateCustomDefense(){
-    const positions = DEF_FORMATION.positions();
+    const basePositions = DEF_FORMATION.positions();
+    const positions = {};
+    DEF_FORMATION.slots.forEach(slot=>{
+      const o = customDefense.startOverride[slot];
+      positions[slot] = o ? Object.assign({}, basePositions[slot], {x:o.x, y:o.y}) : basePositions[slot];
+    });
     const routes = {};
     DEF_FORMATION.slots.forEach(slot=>{
       if (!customDefense.paths[slot]) customDefense.paths[slot] = 'stay';
@@ -5087,7 +5105,7 @@
       .filter(s => customDefense.paths[s] !== 'stay')
       .map(s => (DEF_ROLE_NAMES[s]||s) + ': ' + DEF_PATHS[customDefense.paths[s]].label)
       .join(', ');
-    DEFENSES.customDefense.desc = `<b>Custom Defense — 2-2-1.</b> ${summary || 'Everyone holding their base alignment.'}`;
+    DEFENSES.customDefense.desc = `<b>Gang Green — 2-2-1.</b> ${summary || 'Everyone holding their base alignment.'}`;
   }
 
   function buildDefenseBuilderPanel(){
@@ -5207,6 +5225,57 @@
     window.addEventListener('pointercancel', onAlignmentPointerUp);
   }
 
+  // ---------- pre-snap alignment drag (Tap to Assign, defense) ----------
+  // Same idea as the offense drag above, but a different situation: offense's
+  // drag only exists in Classic (tapping there does nothing, so drag and
+  // click never compete for the same gesture). Defense's drag lives inside
+  // Tap to Assign itself, on the exact same markers that already open the
+  // roster picker on tap — so a plain tap still needs to open that sheet,
+  // and only an actual drag should reposition. Distinguished with a small
+  // movement threshold: preventDefault isn't called until a real drag is
+  // detected (deliberately — .draggable-player already sets touch-action:none
+  // in CSS, so this doesn't cost anything in scroll-suppression), and the
+  // click handler checks the same flag to skip opening the sheet after a
+  // drag that just ended.
+  let defDragSlot = null, defDragMoved = false, defDragStartX = 0, defDragStartY = 0;
+  const DEF_DRAG_THRESHOLD_PX = 6;
+  function onDefenseDragPointerMove(e){
+    if (!defDragSlot) return;
+    if (!defDragMoved){
+      const dx = e.clientX - defDragStartX, dy = e.clientY - defDragStartY;
+      if (Math.hypot(dx, dy) < DEF_DRAG_THRESHOLD_PX) return; // still within tap tolerance
+      defDragMoved = true;
+    }
+    const p = fieldPointFromEvent(e);
+    customDefense.startOverride[defDragSlot] = {x:p.x, y:p.y};
+    regenerateCustomDefense();
+    drawRoutePreviews();
+    render();
+  }
+  function onDefenseDragPointerUp(){
+    if (!defDragSlot) return;
+    if (defDragMoved){
+      logEvent('alignment_drag', {context:'customDefense', slot: defDragSlot});
+      buildTapControls(); // refresh so a "Reset Alignment" button appears
+    }
+    defDragSlot = null;
+    // defDragMoved is deliberately left as-is here — the click event that
+    // follows this pointerup on a real drag checks it to skip re-opening
+    // the assign sheet, then clears it itself. A plain tap never sets it
+    // true in the first place, so taps are unaffected.
+    window.removeEventListener('pointermove', onDefenseDragPointerMove);
+    window.removeEventListener('pointerup', onDefenseDragPointerUp);
+    window.removeEventListener('pointercancel', onDefenseDragPointerUp);
+  }
+  function startDefenseDrag(e, slot){
+    defDragSlot = slot;
+    defDragMoved = false;
+    defDragStartX = e.clientX; defDragStartY = e.clientY;
+    window.addEventListener('pointermove', onDefenseDragPointerMove);
+    window.addEventListener('pointerup', onDefenseDragPointerUp);
+    window.addEventListener('pointercancel', onDefenseDragPointerUp);
+  }
+
   function drawPlayers(){
     playerLayer.innerHTML = '';
     const play = PLAYS[currentPlay];
@@ -5224,6 +5293,11 @@
     // one. Restricted to t===0 so you're always dragging from — and can
     // see — the true starting spot, not some mid-route position.
     const offenseDraggable = interactionMode === 'classic' && (currentPlay === 'customPass' || currentPlay === 'customRun') && t === 0;
+    // Tap to Assign, defense, pre-snap only: same idea, but shares the
+    // exact same markers defenseTappable already uses to open the roster
+    // picker — see startDefenseDrag's comment for how tap vs. drag gets
+    // told apart on the same element.
+    const defenseDraggable = defenseTappable && t === 0;
     const throws = throwChain(play);
     // Highlight whoever ends up with the ball at the end of the chain — the
     // real carrier normally, or the option target on a play where the pass
@@ -5270,7 +5344,16 @@
       g.appendChild(txt);
       if (defenseTappable){
         g.classList.add('tappable');
-        g.onclick = ()=> openAssignSheet(key, 'defense');
+        g.onclick = ()=>{
+          // A drag that just ended fires its own trailing click — swallow
+          // that one instead of also opening the roster sheet.
+          if (defDragMoved){ defDragMoved = false; return; }
+          openAssignSheet(key, 'defense');
+        };
+      }
+      if (defenseDraggable){
+        g.classList.add('draggable-player');
+        g.addEventListener('pointerdown', (e)=> startDefenseDrag(e, key));
       }
       playerLayer.appendChild(g);
     });
@@ -5833,6 +5916,14 @@
   // this view. Add a play's key here as each one gets built.
   const TAP_DESIGNED_PLAYS = ['power', 'flySweep', 'quickToss', 'drawDelay', 'crissCross', 'optionPass', 'tripsInsideScreen', 'paFakePower'];
   let tapDesignedPlay = null;       // key into TAP_DESIGNED_PLAYS
+  // Same idea on the defense side, but just one entry so far: Gang Green
+  // (== DEFENSES.customDefense, same object Classic mode's tab uses — this
+  // isn't a separate defense, just a named, explicit choice for it inside
+  // Tap to Assign instead of the old silent auto-select). setInteractionMode
+  // still auto-picks the first one on entry, so nothing changes behavior-
+  // wise — this only makes that choice visible. Add more keys here if
+  // additional named defensive plays get built for Tap to Assign later.
+  const TAP_DEFENSIVE_PLAYS = ['customDefense'];
 
   function setInteractionMode(mode){
     interactionMode = mode;
@@ -5911,9 +6002,48 @@
       hint.textContent = 'Pick a play above to load it.';
       panel.appendChild(hint);
     }
-    // Defense: nothing to show here yet — no defensive plays exist to pick
-    // from. Leave the Playbook dropdown blank rather than showing an
-    // unrelated hint; revisit once defensive plays are built out.
+    if (currentMode === 'defense'){
+      if (TAP_DEFENSIVE_PLAYS.length){
+        const defWrap = document.createElement('div');
+        defWrap.style.display = 'flex'; defWrap.style.gap = '6px'; defWrap.style.flexWrap = 'wrap';
+        TAP_DEFENSIVE_PLAYS.forEach(key=>{
+          const b = document.createElement('button');
+          b.className = 'subtoggle-btn' + (currentDefense===key ? ' active' : '');
+          b.textContent = DEFENSES[key].name;
+          b.onclick = ()=>{
+            logEvent('defense_tab_select', {defense:key, context:'tap'});
+            setDefense(key);
+            buildTapControls();
+            drawRoutePreviews();
+            render();
+          };
+          defWrap.appendChild(b);
+        });
+        panel.appendChild(defWrap);
+      }
+      if (currentDefense === 'customDefense'){
+        // This is where a coach can drag defenders to an odd pre-snap
+        // look, same spirit as offense's Classic-mode alignment drag.
+        const hint = document.createElement('div');
+        hint.className = 'tap-hint';
+        hint.textContent = 'Drag a defender on the field, pre-snap, to show an odd alignment.';
+        panel.appendChild(hint);
+        if (Object.keys(customDefense.startOverride).length){
+          const resetBtn = document.createElement('button');
+          resetBtn.className = 'subtoggle-btn';
+          resetBtn.textContent = 'Reset Alignment';
+          resetBtn.onclick = ()=>{
+            customDefense.startOverride = {};
+            logEvent('alignment_reset', {context:'customDefense'});
+            regenerateCustomDefense();
+            drawRoutePreviews();
+            buildTapControls();
+            render();
+          };
+          panel.appendChild(resetBtn);
+        }
+      }
+    }
 
     // Safety valve alongside the bump-on-tap fix above: sometimes you just
     // want a clean slate for this side of the ball rather than moving kids
@@ -6333,7 +6463,11 @@
       .map(i=>i.value.trim()).filter(Boolean);
     setRoster(names);
     ROSTER = names;
+    logEvent('roster_edit', {count: names.length});
+    buildLineupPanel();
+    if (typeof buildDefenseLineupPanel === 'function') buildDefenseLineupPanel();
     closeRosterSheet();
+    pushSessionState();
   };
   document.getElementById('headerEditRosterBtn').addEventListener('click', openRosterSheet);
   if (!getRoster().length) openRosterSheet();
