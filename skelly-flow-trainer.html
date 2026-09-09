@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Skelly Flow</title>
+<link rel="manifest" href="skelly-manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d1b2a">
+<style>
+  :root{
+    --bg:#0d1b2a;
+    --panel:#132639;
+    --panel-border:#1f3a52;
+    --field:#1f5c46;
+    --field-line:rgba(255,255,255,0.35);
+    --field-line-strong:rgba(255,255,255,0.55);
+    --gold:#ffd166;
+    --offense:#ef5b5b;
+    --defense:#4ecdc4;
+    --ball-carrier:#4caf50;
+    --text:#eaf2f8;
+    --text-dim:#9fb3c4;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent;
+    overscroll-behavior:none;
+  }
+  .app{max-width:520px;margin:0 auto;padding:14px 14px 24px;}
+  header{margin-bottom:10px;}
+  h1{font-size:1.5rem;margin:0 0 2px;letter-spacing:0.5px;}
+  .subtitle{color:var(--text-dim);font-size:0.85rem;margin:0;}
+
+  .playbook-panel{
+    background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;
+    margin:12px 0 6px;overflow:hidden;
+  }
+  .playbook-header{
+    display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none;
+  }
+  .playbook-title{flex:1;font-weight:700;font-size:0.95rem;}
+  .playbook-chevron{color:var(--text-dim);font-size:0.75rem;transition:transform .2s ease;}
+  .playbook-panel.expanded .playbook-chevron{transform:rotate(180deg);}
+  .playbook-body{max-height:0;overflow:hidden;transition:max-height .25s ease;}
+  .playbook-panel.expanded .playbook-body{max-height:480px;}
+  .playbook-body-inner{padding:0 14px 14px;}
+
+  .toggle-row{display:flex;gap:8px;margin-bottom:10px;}
+  .toggle-btn{
+    flex:1;padding:10px 8px;border-radius:10px;border:1px solid var(--panel-border);
+    background:#0f2032;color:var(--text-dim);font-size:0.95rem;font-weight:600;
+    cursor:pointer;transition:all .15s ease;
+  }
+  .toggle-btn.active.offense{background:var(--offense);color:#1a0505;border-color:var(--offense);}
+  .toggle-btn.active.defense{background:var(--defense);color:#04211d;border-color:var(--defense);}
+
+  .tap-controls{display:flex;flex-direction:column;gap:8px;}
+  .subtoggle-row{display:flex;gap:6px;flex-wrap:wrap;}
+  .subtoggle-btn{
+    padding:8px 13px;border-radius:16px;background:#0f2032;
+    color:var(--text-dim);border:1px solid var(--panel-border);font-size:0.82rem;
+    cursor:pointer;font-weight:600;
+  }
+  .subtoggle-btn.active{background:var(--gold);color:#231a02;border-color:var(--gold);}
+  .tap-hint{color:var(--text-dim);font-size:0.72rem;font-style:italic;}
+
+  .field-wrap{
+    position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--panel-border);
+    background:var(--field);
+  }
+  .field-logo{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:52%;opacity:0.16;pointer-events:none;z-index:0;
+  }
+  .phase-badge{
+    position:absolute;top:8px;left:50%;transform:translateX(-50%);
+    background:rgba(0,0,0,0.55);color:var(--gold);font-size:0.7rem;font-weight:700;
+    padding:4px 10px;border-radius:12px;z-index:3;display:none;pointer-events:none;
+  }
+  .phase-badge.show{display:block;}
+  svg{display:block;width:100%;height:auto;position:relative;z-index:1;}
+
+  .yard-text{fill:rgba(255,255,255,0.55);font-size:9px;font-family:inherit;}
+  .route-path{fill:none;stroke:rgba(255,255,255,0.85);stroke-width:1.6;stroke-dasharray:4 4;}
+  .route-path.def{stroke:rgba(255,255,255,0.55);stroke-dasharray:2 4;}
+  .block-mark{stroke:rgba(255,255,255,0.85);stroke-width:2;}
+
+  .player-label{
+    font-size:9px;font-weight:700;fill:#0d1b2a;text-anchor:middle;dominant-baseline:middle;
+    pointer-events:none;
+  }
+
+  .floating-controls{
+    position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+    display:flex;align-items:center;gap:6px;background:var(--panel);border:1px solid var(--panel-border);
+    border-radius:14px;padding:8px 10px;box-shadow:0 6px 18px rgba(0,0,0,0.45);z-index:100;
+    max-width:94vw;overflow-x:auto;
+  }
+  .floating-controls.minimized .extra-control{display:none;}
+  .fc-handle{cursor:grab;color:var(--text-dim);font-size:1.1rem;padding:0 4px;touch-action:none;flex-shrink:0;}
+  .fc-handle:active{cursor:grabbing;}
+  .btn{
+    width:34px;height:34px;border-radius:50%;border:none;background:#0f2032;color:var(--text);
+    font-size:0.95rem;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;
+  }
+  .btn.primary{background:var(--gold);color:#231a02;}
+  .scrub{width:80px;accent-color:var(--gold);flex-shrink:0;}
+  .speed-select{
+    background:#0f2032;color:var(--text);border:1px solid var(--panel-border);border-radius:8px;
+    font-size:0.72rem;padding:6px 2px;flex-shrink:0;
+  }
+  .fc-toggle{background:none;border:none;color:var(--text-dim);font-size:1rem;cursor:pointer;padding:0 4px;flex-shrink:0;}
+
+  .play-name{
+    text-align:center;font-size:0.9rem;font-weight:700;margin:2px 0 6px;color:var(--gold);
+    min-height:1.2em;
+  }
+
+  .decisions-note{
+    margin-top:16px;font-size:0.72rem;color:var(--text-dim);line-height:1.4;
+    border-top:1px dashed var(--panel-border);padding-top:10px;
+  }
+  .decisions-note summary{cursor:pointer;color:var(--text-dim);font-weight:600;}
+  .decisions-note ul{margin:8px 0 0;padding-left:18px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Skelly Flow</h1>
+    <p class="subtitle">7 on 7 playbook trainer — watch the play unfold, snap to whistle.</p>
+  </header>
+
+  <div class="playbook-panel" id="playbookPanel">
+    <div class="playbook-header" id="playbookHeader">
+      <span class="playbook-title">Playbook</span>
+      <span class="playbook-chevron">▾</span>
+    </div>
+    <div class="playbook-body">
+      <div class="playbook-body-inner">
+        <div class="toggle-row">
+          <button class="toggle-btn active offense" id="btnOffense" type="button">Offense</button>
+          <button class="toggle-btn defense" id="btnDefense" type="button">Defense</button>
+        </div>
+        <div class="tap-controls" id="offenseControls">
+          <div class="subtoggle-row" id="offenseChips"></div>
+          <div class="tap-hint">Tap a play above to load it.</div>
+        </div>
+        <div class="tap-controls" id="defenseControls" style="display:none;">
+          <div class="subtoggle-row" id="defenseChips"></div>
+          <div class="tap-hint">Tap a coverage above to load it.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="play-name" id="playName"></div>
+
+  <div class="field-wrap">
+    <img class="field-logo" src="skelly-on-field-logo.png" alt="">
+    <div class="phase-badge" id="phaseBadge">Ball in the air</div>
+    <svg id="field" viewBox="0 0 340 560" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+
+  <div class="floating-controls" id="floatingControls">
+    <span class="fc-handle" id="fcHandle" title="Drag to move">⠿</span>
+    <button class="btn extra-control" id="resetBtn" title="Reset">⟲</button>
+    <button class="btn extra-control" id="stepBackBtn" title="Step back">◁</button>
+    <button class="btn extra-control" id="flipBtn" title="Flip formation">⇋</button>
+    <button class="btn primary" id="playBtn" title="Play/Pause">▶</button>
+    <button class="btn extra-control" id="stepFwdBtn" title="Step forward">▷</button>
+    <input type="range" class="scrub extra-control" id="scrub" min="0" max="1000" value="0">
+    <select class="speed-select extra-control" id="speedSelect">
+      <option value="0.1">Slow</option>
+      <option value="0.18" selected>Normal</option>
+      <option value="0.3">Fast</option>
+    </select>
+    <button class="fc-toggle" id="fcToggle" title="Minimize">⌄</button>
+  </div>
+
+  <details class="decisions-note">
+    <summary>Build notes / decisions to QA</summary>
+    <ul>
+      <li>Default ball targets on plays without a named receiver (i.e. not X Now/Y Now): Doubles Bubble Slant → Z, Trips Bubble Slant → X, Doubles Bubble Screen → Z, Doubles Deep Switch → X. All run plays → RB. Flag any you'd rather see targeted differently.</li>
+      <li>Ball is now only visible while actually in flight on a pass (with the "Ball in the air" badge). Run/handoff plays never show a ball icon at all — the handoff is treated as instant, so there's no separate "in transit" moment to display, and the green highlight on the RB is the only indicator. Flag if you want a brief visible handoff moment too.</li>
+      <li>Speed select (Slow/Normal/Fast = 0.1/0.18/0.3) is wired as "fraction of the full play per second," so Slow = longer total playback, Fast = shorter — I don't have Flag Flow's actual formula, so this is a guess at matching the feel, not a verified match.</li>
+      <li>Floating controls bar is genuinely draggable now (grab the ⠿ handle) and minimizes down to just the play button via the ⌄ toggle. Flip formation isn't in your pasted Flag Flow markup, so I added it into this bar as an extra button since the app still needs it somewhere.</li>
+      <li>Step back/forward move in fixed 5% increments of the play — not tied to real yardage or a frame count, just a reasonable default.</li>
+    </ul>
+  </details>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Field geometry ----------
+  const LOS = 15;
+  const FIELD_TOP_YARD = 55;
+  const FIELD_BOTTOM_YARD = 5;
+  const SVG_W = 340, SVG_H = 560;
+  const MARGIN_X = 20;
+
+  // Absolute alignment constants (all in yard-lines / field-width units)
+  const QB_Y = LOS - 3;         // 12
+  const RB_Y = QB_Y - 2;        // 10, directly behind QB
+  const OUTER_WR_Y = LOS;       // X, Y — on the line
+  const INNER_WR_Y = LOS - 2;   // Z, S — off the line
+  const CB_PRESNAP_Y = 18;
+  const DL_Y = 17;
+  const SAFETY_PRESNAP_Y = 25;
+  const SAFETY_POSTSNAP_Y = 32;
+  const CB_COVER2_END_Y = 23;
+  const HASH_LEFT = 30, HASH_RIGHT = 70;
+
+  function xToPx(x){ return MARGIN_X + (x/100) * (SVG_W - 2*MARGIN_X); }
+  function yToPx(y){
+    const t = (y - FIELD_BOTTOM_YARD) / (FIELD_TOP_YARD - FIELD_BOTTOM_YARD);
+    return SVG_H - t * SVG_H;
+  }
+  function mirrorX(x){ return 100 - x; }
+  function kf(t,x,y){ return {t,x,y}; }
+
+  // ---------- Canonical (unflipped) formations ----------
+  const FORMATIONS = {
+    doubles: {
+      label: "4 WR (Doubles)",
+      positions: {
+        Y:  {x: 8,  y: OUTER_WR_Y},
+        Z:  {x: 25, y: INNER_WR_Y},
+        QB: {x: 50, y: QB_Y},
+        C:  {x: 50, y: LOS},
+        RB: {x: 50, y: RB_Y},
+        S:  {x: 75, y: INNER_WR_Y},
+        X:  {x: 92, y: OUTER_WR_Y}
+      }
+    },
+    trips: {
+      label: "Trips",
+      positions: {
+        X:  {x: 5,  y: OUTER_WR_Y},  // outermost of stack, on the line
+        Z:  {x: 16, y: INNER_WR_Y},  // middle of stack, off the line
+        S:  {x: 27, y: INNER_WR_Y},  // innermost of stack, off the line
+        QB: {x: 50, y: QB_Y},
+        C:  {x: 50, y: LOS},
+        RB: {x: 50, y: RB_Y},
+        Y:  {x: 92, y: OUTER_WR_Y}   // backside single, on the line
+      }
+    }
+  };
+
+  // X and Y are always the two "on the line" outside-eligible receivers;
+  // Z and S are always the two off-the-line inside receivers — regardless of formation.
+  const OUTSIDE_ROLES = ["X","Y"];
+  const INSIDE_ROLES  = ["Z","S"];
+
+  // ---------- Route library (canonical / unflipped only — flip is applied once, uniformly, after) ----------
+  function routeFor(formationKey, playKey, roleName, startPos){
+    const sx = startPos.x, sy = startPos.y;
+    let pts = null;
+
+    if (formationKey === "doubles") {
+      switch(playKey){
+        case "doublesBubbleSlant":
+          if (roleName==="Y") pts=[kf(0,sx,sy),kf(.4,sx,sy+8),kf(1,sx+27,sy+18)];
+          if (roleName==="Z") pts=[kf(0,sx,sy),kf(.3,sx-10,sy-2),kf(.6,sx-15,sy-2),kf(1,sx-20,sy+1)];
+          if (roleName==="S") pts=[kf(0,sx,sy),kf(.3,sx+10,sy-2),kf(.6,sx+15,sy-2),kf(1,sx+20,sy+1)];
+          if (roleName==="X") pts=[kf(0,sx,sy),kf(.4,sx,sy+8),kf(1,sx-27,sy+18)];
+          break;
+        case "doublesBubbleScreen":
+          if (roleName==="Y") pts=[kf(0,sx,sy),kf(1,sx,sy+1)];
+          if (roleName==="Z") pts=[kf(0,sx,sy),kf(.35,sx-10,sy-2),kf(1,sx-17,sy-2)];
+          if (roleName==="S") pts=[kf(0,sx,sy),kf(.35,sx+10,sy-2),kf(1,sx+17,sy-2)];
+          if (roleName==="X") pts=[kf(0,sx,sy),kf(1,sx,sy+1)];
+          break;
+        case "insideZoneRight":
+        case "outsideZoneRight":
+        case "rbToss":
+          if (["Y","Z","S","X"].includes(roleName)) pts=[kf(0,sx,sy),kf(1,sx+1,sy+1)];
+          break;
+        case "doublesDeepSwitch":
+          if (roleName==="Y") pts=[kf(0,sx,sy),kf(.25,sx,sy+5),kf(.5,sx+8,sy+15),kf(1,sx+12,sy+30)];
+          if (roleName==="Z") pts=[kf(0,sx,sy),kf(.25,sx,sy+7),kf(.5,sx-10,sy+17),kf(1,sx-16,sy+32)];
+          if (roleName==="S") pts=[kf(0,sx,sy),kf(.25,sx,sy+7),kf(.5,sx+10,sy+17),kf(1,sx+16,sy+32)];
+          if (roleName==="X") pts=[kf(0,sx,sy),kf(.25,sx,sy+5),kf(.5,sx-8,sy+15),kf(1,sx-12,sy+30)];
+          break;
+        case "yNow":
+          if (roleName==="Y") pts=[kf(0,sx,sy),kf(1,sx,sy-1)];
+          if (["Z","S","X"].includes(roleName)) pts=[kf(0,sx,sy),kf(1,sx,sy+1)];
+          break;
+        case "xNow":
+          if (roleName==="X") pts=[kf(0,sx,sy),kf(1,sx,sy-1)];
+          if (["Y","Z","S"].includes(roleName)) pts=[kf(0,sx,sy),kf(1,sx,sy+1)];
+          break;
+      }
+      if (roleName==="C") pts = pts || [kf(0,sx,sy),kf(1,sx,sy)];
+      if (roleName==="QB"){
+        if (["insideZoneRight","outsideZoneRight","rbToss"].includes(playKey))
+          pts=[kf(0,sx,sy),kf(1,sx+2,sy+1)];
+        else
+          pts=[kf(0,sx,sy),kf(1,sx,sy-2)];
+      }
+      if (roleName==="RB"){
+        if (playKey==="insideZoneRight") pts=[kf(0,sx,sy),kf(.3,sx+4,sy+2),kf(.6,sx+12,sy+9),kf(1,sx+16,sy+17)];
+        else if (playKey==="outsideZoneRight") pts=[kf(0,sx,sy),kf(.3,sx+7,sy+1),kf(.6,sx+20,sy+4),kf(1,sx+33,sy+11)];
+        else if (playKey==="rbToss") pts=[kf(0,sx,sy),kf(.3,sx+9,sy-1),kf(.6,sx+25,sy+3),kf(1,sx+40,sy+9)];
+        else pts=[kf(0,sx,sy),kf(1,sx,sy)];
+      }
+    }
+
+    if (formationKey === "trips" && playKey === "tripsBubbleSlant"){
+      if (roleName==="X") pts=[kf(0,sx,sy),kf(.4,sx,sy+8),kf(1,sx+25,sy+18)];
+      if (roleName==="Z") pts=[kf(0,sx,sy),kf(.4,sx,TRIPS_Z_BREAK_Y),kf(1,sx+19,27)]; // break at yard 19 exactly; re-applied cleanly in buildOffenseRoutes below
+      if (roleName==="S") pts=[kf(0,sx,sy),kf(.3,sx-10,sy-2),kf(.6,sx-15,sy-2),kf(1,sx-19,sy+1)];
+      if (roleName==="Y") pts=[kf(0,sx,sy),kf(1,sx,sy+25)];
+      if (roleName==="C") pts=[kf(0,sx,sy),kf(1,sx,sy)];
+      if (roleName==="QB") pts=[kf(0,sx,sy),kf(1,sx,sy-2)];
+      if (roleName==="RB") pts=[kf(0,sx,sy),kf(1,sx,sy)];
+    }
+
+    return pts || [kf(0,sx,sy),kf(1,sx,sy)];
+  }
+  // Fix: Z's break in Trips Bubble Slant must land exactly on yard 19 regardless of start y.
+  // (Simplified directly below rather than the inline ternary above, kept for clarity.)
+  const TRIPS_Z_BREAK_Y = 19;
+
+  const OFFENSE_PLAYS = [
+    {key:"doublesBubbleSlant", label:"Doubles Bubble Slant", formation:"doubles"},
+    {key:"tripsBubbleSlant",   label:"Trips Bubble Slant",   formation:"trips"},
+    {key:"doublesBubbleScreen",label:"Doubles Bubble Screen",formation:"doubles"},
+    {key:"insideZoneRight",    label:"Inside Zone Right",    formation:"doubles"},
+    {key:"outsideZoneRight",   label:"Outside Zone Right",   formation:"doubles"},
+    {key:"doublesDeepSwitch",  label:"Doubles Deep Switch",  formation:"doubles"},
+    {key:"yNow",               label:"Y Now",                formation:"doubles"},
+    {key:"xNow",               label:"X Now",                formation:"doubles"},
+    {key:"rbToss",             label:"RB Toss",              formation:"doubles"}
+  ];
+  const DEFENSE_PLAYS = [
+    {key:"cover2",        label:"Cover 2"},
+    {key:"cover2ManUnder",label:"Cover 2 Man Under"}
+  ];
+
+  const BLOCK_ROLES = {
+    doublesBubbleScreen: ["Y","X"],
+    insideZoneRight: ["Y","Z","S","X"],
+    outsideZoneRight: ["Y","Z","S","X"],
+    rbToss: ["Y","Z","S","X"],
+    yNow: ["Z","S","X"],
+    xNow: ["Y","Z","S"]
+  };
+
+  const BALL_PLAN = {
+    doublesBubbleSlant: {holder:"Z", changeAt:0.5},
+    tripsBubbleSlant:   {holder:"X", changeAt:0.55},
+    doublesBubbleScreen:{holder:"Z", changeAt:0.4},
+    insideZoneRight:    {holder:"RB", changeAt:0.15},
+    outsideZoneRight:   {holder:"RB", changeAt:0.15},
+    doublesDeepSwitch:  {holder:"X", changeAt:0.6},
+    yNow:               {holder:"Y", changeAt:0.25},
+    xNow:               {holder:"X", changeAt:0.25},
+    rbToss:             {holder:"RB", changeAt:0.12}
+  };
+
+  // ---------- State ----------
+  let mode = "offense";
+  let currentOffensePlay = OFFENSE_PLAYS[0].key;
+  let currentDefensePlay = DEFENSE_PLAYS[0].key;
+  let flipped = false;
+  let playing = false;
+  let animT = 0;
+  let rafId = null;
+  let lastTs = null;
+  let currentSpeed = 0.18; // matches Flag Flow's Slow/Normal/Fast values
+
+  // ---------- DOM ----------
+  const svg = document.getElementById('field');
+  const offenseChips = document.getElementById('offenseChips');
+  const defenseChips = document.getElementById('defenseChips');
+  const offenseControls = document.getElementById('offenseControls');
+  const defenseControls = document.getElementById('defenseControls');
+  const playNameEl = document.getElementById('playName');
+  const phaseBadge = document.getElementById('phaseBadge');
+  const btnOffense = document.getElementById('btnOffense');
+  const btnDefense = document.getElementById('btnDefense');
+  const playBtn = document.getElementById('playBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const stepBackBtn = document.getElementById('stepBackBtn');
+  const stepFwdBtn = document.getElementById('stepFwdBtn');
+  const flipBtn = document.getElementById('flipBtn');
+  const scrub = document.getElementById('scrub');
+  const speedSelect = document.getElementById('speedSelect');
+  const floatingControls = document.getElementById('floatingControls');
+  const fcHandle = document.getElementById('fcHandle');
+  const fcToggle = document.getElementById('fcToggle');
+
+  function interp(pts, t){
+    if (t <= pts[0].t) return {x:pts[0].x, y:pts[0].y};
+    for (let i=0;i<pts.length-1;i++){
+      const a = pts[i], b = pts[i+1];
+      if (t >= a.t && t <= b.t){
+        const localT = b.t===a.t ? 0 : (t-a.t)/(b.t-a.t);
+        return {x: a.x + (b.x-a.x)*localT, y: a.y + (b.y-a.y)*localT};
+      }
+    }
+    const last = pts[pts.length-1];
+    return {x:last.x, y:last.y};
+  }
+
+  function currentFormationKey(){
+    const p = OFFENSE_PLAYS.find(p=>p.key===currentOffensePlay);
+    return p ? p.formation : "doubles";
+  }
+
+  // Build offense routes: compute canonical, THEN mirror once if flipped. Single mirror = correct.
+  function buildOffenseRoutes(){
+    const formationKey = currentFormationKey();
+    const canonical = FORMATIONS[formationKey].positions;
+    const routes = {};
+    Object.keys(canonical).forEach(role=>{
+      let pts = routeFor(formationKey, currentOffensePlay, role, canonical[role]);
+      // apply the yard-19 break fix for trips Z cleanly
+      if (formationKey==="trips" && currentOffensePlay==="tripsBubbleSlant" && role==="Z"){
+        const sx = canonical[role].x, sy = canonical[role].y;
+        pts = [kf(0,sx,sy), kf(.4,sx,TRIPS_Z_BREAK_Y), kf(1,sx+19,27)];
+      }
+      if (flipped) pts = pts.map(p=>({t:p.t, x:mirrorX(p.x), y:p.y}));
+      routes[role] = pts;
+    });
+    return routes;
+  }
+
+  // Defense positions/routes derived from the ACTUAL (already-mirrored) offense alignment.
+  function buildDefenseRoutes(offenseRoutes){
+    const routes = {};
+    const wrStart = {}; // t=0 position of each WR
+    ["X","Y","Z","S"].forEach(r=>{ wrStart[r] = offenseRoutes[r][0]; });
+
+    routes.DL = [kf(0,50,DL_Y), kf(1,50,DL_Y)];
+    routes.S1 = [kf(0,HASH_LEFT,SAFETY_PRESNAP_Y), kf(1,HASH_LEFT,SAFETY_POSTSNAP_Y)];
+    routes.S2 = [kf(0,HASH_RIGHT,SAFETY_PRESNAP_Y), kf(1,HASH_RIGHT,SAFETY_POSTSNAP_Y)];
+
+    ["X","Y","Z","S"].forEach(wr=>{
+      const start = wrStart[wr];
+      const cbKey = "CB_"+wr;
+      const isOutside = OUTSIDE_ROLES.includes(wr);
+      if (currentDefensePlay === "cover2"){
+        if (isOutside){
+          routes[cbKey] = [kf(0,start.x,CB_PRESNAP_Y), kf(1,start.x,CB_COVER2_END_Y)];
+        } else {
+          const towardHash = start.x < 50 ? HASH_LEFT : HASH_RIGHT;
+          routes[cbKey] = [kf(0,start.x,CB_PRESNAP_Y), kf(1,towardHash,CB_COVER2_END_Y)];
+        }
+      } else { // cover2ManUnder
+        // CB must visibly start backpedaling the instant the ball is snapped (t=0),
+        // then settle into a 1-yard trailing cushion once the WR is ~8 yards deep.
+        // Two components combined: an immediate time-based backpedal, and a
+        // shrinking cushion behind the WR's actual position — whichever puts the
+        // CB deeper wins, so there's no "frozen then jump" moment.
+        const wrPts = offenseRoutes[wr];
+        const samples = [];
+        for (let i=0;i<=20;i++){
+          const t = i/20;
+          const wp = interp(wrPts, t);
+          const ramp = Math.min(t/0.3, 1);
+          const cushion = 5 - 4*ramp;              // 5 yards early, shrinking to 1
+          const backpedal = CB_PRESNAP_Y + 6*ramp;  // immediate depth gain regardless of WR
+          const cy = Math.max(backpedal, wp.y - cushion);
+          samples.push(kf(t, wp.x, cy));
+        }
+        routes[cbKey] = samples;
+      }
+    });
+    return routes;
+  }
+
+  // ---------- Rendering ----------
+  function fieldMarkup(){
+    let s = "";
+    for (let y=FIELD_BOTTOM_YARD; y<=FIELD_TOP_YARD; y+=5){
+      const py = yToPx(y);
+      const strong = (y % 10 === 0);
+      s += `<line x1="${MARGIN_X}" y1="${py}" x2="${SVG_W-MARGIN_X}" y2="${py}" stroke="${strong?'var(--field-line-strong)':'var(--field-line)'}" stroke-width="${strong?1.4:0.8}"/>`;
+    }
+    for (let y=10; y<=50; y+=10){
+      const py = yToPx(y);
+      s += `<text class="yard-text" x="${MARGIN_X-12}" y="${py+3}">${y}</text>`;
+    }
+    [HASH_LEFT,HASH_RIGHT].forEach(hx=>{
+      for (let y=FIELD_BOTTOM_YARD; y<=FIELD_TOP_YARD; y+=1){
+        const py = yToPx(y);
+        s += `<line x1="${xToPx(hx)-3}" y1="${py}" x2="${xToPx(hx)+3}" y2="${py}" stroke="var(--field-line)" stroke-width="0.6"/>`;
+      }
+    });
+    const losPy = yToPx(LOS);
+    s += `<line x1="${MARGIN_X}" y1="${losPy}" x2="${SVG_W-MARGIN_X}" y2="${losPy}" stroke="var(--gold)" stroke-width="1.4"/>`;
+    return s;
+  }
+
+  function playerCircle(role, x, y, isOffense, hasBall){
+    const px = xToPx(x), py = yToPx(y);
+    const fill = hasBall ? 'var(--ball-carrier)' : (isOffense ? 'var(--offense)' : 'var(--defense)');
+    return `<g class="player">
+      <circle cx="${px}" cy="${py}" r="11" fill="${fill}" stroke="#0d1b2a" stroke-width="1.5"/>
+      <text class="player-label" x="${px}" y="${py+0.5}">${role}</text>
+    </g>`;
+  }
+
+  function ballIcon(x, y){
+    const px = xToPx(x), py = yToPx(y);
+    return `<ellipse cx="${px}" cy="${py}" rx="4.5" ry="3" fill="#6b3f1d" stroke="#3a2110" stroke-width="0.6"/>`;
+  }
+
+  function routeLine(pts, isBlock, isDef){
+    if (isBlock){
+      const a = pts[0], b = pts[pts.length-1];
+      return `<line class="block-mark" x1="${xToPx(a.x)}" y1="${yToPx(a.y)}" x2="${xToPx(b.x)}" y2="${yToPx(b.y)}"/>`;
+    }
+    const d = pts.map((p,i)=>`${i===0?'M':'L'}${xToPx(p.x)},${yToPx(p.y)}`).join(' ');
+    return `<path class="route-path${isDef?' def':''}" d="${d}"/>`;
+  }
+
+  let offenseRoutes = {};
+  let defenseRoutes = {};
+
+  function rebuild(){
+    offenseRoutes = buildOffenseRoutes();
+    defenseRoutes = buildDefenseRoutes(offenseRoutes);
+    render();
+  }
+
+  const RUN_PLAYS = new Set(["insideZoneRight","outsideZoneRight","rbToss"]);
+  const THROW_FLIGHT = 0.12; // fraction of the play's total duration a pass is "in the air"
+
+  // Returns { pos, holding } — holding is the role currently possessing the ball
+  // (null while a pass is mid-flight, so nobody flashes green until it's caught).
+  function ballHolderAt(t){
+    const plan = BALL_PLAN[currentOffensePlay];
+    if (!plan) return {pos: interp(offenseRoutes.QB, t), holding:"QB"};
+
+    if (RUN_PLAYS.has(currentOffensePlay)){
+      if (t < plan.changeAt) return {pos: interp(offenseRoutes.QB, t), holding:"QB"};
+      return {pos: interp(offenseRoutes[plan.holder], t), holding: plan.holder};
+    }
+
+    const flightEnd = Math.min(1, plan.changeAt + THROW_FLIGHT);
+    if (t < plan.changeAt) return {pos: interp(offenseRoutes.QB, t), holding:"QB"};
+    if (t < flightEnd){
+      const qbPos = interp(offenseRoutes.QB, plan.changeAt);
+      const targetPos = interp(offenseRoutes[plan.holder], flightEnd);
+      const localT = (flightEnd - plan.changeAt) > 0 ? (t - plan.changeAt)/(flightEnd - plan.changeAt) : 1;
+      return {
+        pos: {x: qbPos.x + (targetPos.x-qbPos.x)*localT, y: qbPos.y + (targetPos.y-qbPos.y)*localT},
+        holding: null
+      };
+    }
+    return {pos: interp(offenseRoutes[plan.holder], t), holding: plan.holder};
+  }
+
+  function render(){
+    let markup = `<g>${fieldMarkup()}</g>`;
+    const blockRoles = BLOCK_ROLES[currentOffensePlay] || [];
+
+    // Offense routes only — defense has no path drawn, just moving dots.
+    Object.keys(offenseRoutes).forEach(role=>{
+      markup += routeLine(offenseRoutes[role], blockRoles.includes(role), false);
+    });
+
+    const ball = ballHolderAt(animT);
+    const inFlight = (ball.holding === null); // only true mid-throw on pass plays
+
+    Object.keys(offenseRoutes).forEach(role=>{
+      const p = interp(offenseRoutes[role], animT);
+      markup += playerCircle(role, p.x, p.y, true, ball.holding===role);
+    });
+    Object.keys(defenseRoutes).forEach(role=>{
+      const p = interp(defenseRoutes[role], animT);
+      const label = role.startsWith("CB_") ? "CB" : role.startsWith("S") ? "S" : role;
+      markup += playerCircle(label, p.x, p.y, false, false);
+    });
+
+    if (inFlight) markup += ballIcon(ball.pos.x, ball.pos.y);
+    phaseBadge.classList.toggle('show', inFlight);
+
+    svg.innerHTML = markup;
+  }
+
+  // ---------- Playback ----------
+  function step(ts){
+    if (lastTs===null) lastTs=ts;
+    const dt = ts-lastTs;
+    lastTs = ts;
+    const durationMs = 1000/currentSpeed;
+    animT += dt/durationMs;
+    if (animT >= 1){ animT = 1; playing=false; playBtn.textContent="▶"; }
+    scrub.value = Math.round(animT*1000);
+    render();
+    if (playing) rafId = requestAnimationFrame(step);
+  }
+  function play(){
+    if (animT >= 1) animT = 0;
+    playing = true; lastTs = null;
+    playBtn.textContent = "⏸";
+    rafId = requestAnimationFrame(step);
+  }
+  function pause(){
+    playing = false; playBtn.textContent = "▶";
+    if (rafId) cancelAnimationFrame(rafId);
+  }
+  function reset(){ pause(); animT = 0; scrub.value = 0; render(); }
+  function stepBy(delta){
+    pause();
+    animT = Math.max(0, Math.min(1, animT + delta));
+    scrub.value = Math.round(animT*1000);
+    render();
+  }
+
+  // ---------- UI wiring ----------
+  function renderChips(){
+    offenseChips.innerHTML = "";
+    OFFENSE_PLAYS.forEach(p=>{
+      const btn = document.createElement('button');
+      btn.className = 'subtoggle-btn' + (p.key===currentOffensePlay ? ' active':'');
+      btn.textContent = p.label;
+      btn.type = 'button';
+      btn.addEventListener('click', ()=>{
+        currentOffensePlay = p.key;
+        renderChips(); updatePlayName(); reset(); rebuild();
+      });
+      offenseChips.appendChild(btn);
+    });
+    defenseChips.innerHTML = "";
+    DEFENSE_PLAYS.forEach(p=>{
+      const btn = document.createElement('button');
+      btn.className = 'subtoggle-btn' + (p.key===currentDefensePlay ? ' active':'');
+      btn.textContent = p.label;
+      btn.type = 'button';
+      btn.addEventListener('click', ()=>{
+        currentDefensePlay = p.key;
+        renderChips(); updatePlayName(); reset(); rebuild();
+      });
+      defenseChips.appendChild(btn);
+    });
+  }
+
+  function updatePlayName(){
+    const off = OFFENSE_PLAYS.find(p=>p.key===currentOffensePlay);
+    const def = DEFENSE_PLAYS.find(p=>p.key===currentDefensePlay);
+    playNameEl.textContent = `${off?off.label:''} vs ${def?def.label:''}`;
+  }
+
+  btnOffense.addEventListener('click', ()=>{
+    mode = "offense";
+    btnOffense.classList.add('active'); btnDefense.classList.remove('active');
+    offenseControls.style.display = ""; defenseControls.style.display = "none";
+  });
+  btnDefense.addEventListener('click', ()=>{
+    mode = "defense";
+    btnDefense.classList.add('active'); btnOffense.classList.remove('active');
+    defenseControls.style.display = ""; offenseControls.style.display = "none";
+  });
+
+  flipBtn.addEventListener('click', ()=>{ flipped = !flipped; reset(); rebuild(); });
+  resetBtn.addEventListener('click', reset);
+  stepBackBtn.addEventListener('click', ()=> stepBy(-0.05));
+  stepFwdBtn.addEventListener('click', ()=> stepBy(0.05));
+  playBtn.addEventListener('click', ()=>{ if (playing) pause(); else play(); });
+  scrub.addEventListener('input', (e)=>{ pause(); animT = Number(e.target.value)/1000; render(); });
+  speedSelect.addEventListener('change', (e)=>{ currentSpeed = Number(e.target.value); });
+
+  // ---------- Playbook accordion ----------
+  const playbookPanel = document.getElementById('playbookPanel');
+  const playbookHeader = document.getElementById('playbookHeader');
+  playbookHeader.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    playbookPanel.classList.toggle('expanded');
+  });
+  document.addEventListener('click', (e)=>{
+    if (playbookPanel.classList.contains('expanded') && !playbookPanel.contains(e.target)){
+      playbookPanel.classList.remove('expanded');
+    }
+  });
+
+  // ---------- Floating controls: minimize + drag ----------
+  fcToggle.addEventListener('click', ()=>{
+    const nowMinimized = floatingControls.classList.toggle('minimized');
+    fcToggle.textContent = nowMinimized ? "⌃" : "⌄";
+  });
+
+  let dragging = false, dragOffsetX = 0, dragOffsetY = 0;
+  function dragStart(clientX, clientY){
+    const rect = floatingControls.getBoundingClientRect();
+    dragOffsetX = clientX - rect.left;
+    dragOffsetY = clientY - rect.top;
+    floatingControls.style.left = rect.left + 'px';
+    floatingControls.style.top = rect.top + 'px';
+    floatingControls.style.bottom = 'auto';
+    floatingControls.style.transform = 'none';
+    dragging = true;
+  }
+  function dragMove(clientX, clientY){
+    if (!dragging) return;
+    let newLeft = clientX - dragOffsetX;
+    let newTop = clientY - dragOffsetY;
+    newLeft = Math.max(4, Math.min(window.innerWidth - floatingControls.offsetWidth - 4, newLeft));
+    newTop = Math.max(4, Math.min(window.innerHeight - floatingControls.offsetHeight - 4, newTop));
+    floatingControls.style.left = newLeft + 'px';
+    floatingControls.style.top = newTop + 'px';
+  }
+  function dragEnd(){ dragging = false; }
+
+  fcHandle.addEventListener('pointerdown', (e)=>{
+    dragStart(e.clientX, e.clientY);
+    fcHandle.setPointerCapture(e.pointerId);
+  });
+  fcHandle.addEventListener('pointermove', (e)=>{ dragMove(e.clientX, e.clientY); });
+  fcHandle.addEventListener('pointerup', dragEnd);
+  fcHandle.addEventListener('pointercancel', dragEnd);
+
+  // ---------- Init ----------
+  renderChips();
+  updatePlayName();
+  rebuild();
+
+  if ('serviceWorker' in navigator){
+    window.addEventListener('load', ()=>{
+      navigator.serviceWorker.register('skelly-sw.js').catch(()=>{});
+    });
+  }
+})();
+</script>
+</body>
+</html>
