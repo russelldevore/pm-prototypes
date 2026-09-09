@@ -855,8 +855,8 @@
   // Same defensive pattern as flag-flow-team-sync.html throughout: a
   // dynamic import inside try/catch, so no signal or unconfigured
   // credentials just mean "behaves like solo mode," never a broken page.
-  const SUPABASE_URL = "https://imfwbikmumyitfmqbcxj.supabase.co";
-  const SUPABASE_ANON_KEY = "sb_publishable_7fifS7gsBSwcY6oS9ZDVgg_NfS7qTv0";
+  const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE";
+  const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
   // Shared secret both coaches' copies of this file must agree on — same
   // trust model as Team Sync's team code. Change it if you want, just
   // keep every deployed copy of this file in sync.
@@ -986,7 +986,12 @@
       row.result = detail ? detail.result : null;
       row.carrier_name = detail ? detail.carrierName : null;
     }
-    sb.from('events').insert(row).catch(()=>{}); // best-effort, matches the Sheet's own no-cors fire-and-forget
+    // Supabase's query builder is only "thenable" (implements .then, not a
+    // real Promise) until .then() is actually called on it — chaining
+    // .catch() straight off insert() throws "catch is not a function".
+    // Two-argument .then(onFulfilled, onRejected) works on any thenable,
+    // so this stays best-effort/fire-and-forget without that trap.
+    sb.from('events').insert(row).then(()=>{}, ()=>{});
   }
 
   // ---------- yard scale ----------
