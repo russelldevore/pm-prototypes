@@ -8,6 +8,12 @@
 <meta name="theme-color" content="#1c3d31">
 <!-- Home-screen icon (iOS "Add to Home Screen" reads this, not manifest.json) -->
 <link rel="apple-touch-icon" href="./appletouchicon.png">
+<!-- Without these, "Add to Home Screen" on iOS just creates a bookmark that
+     opens in regular Safari — full browser chrome, other tabs reachable,
+     address bar and all. These two tags are what actually tell iOS to
+     launch it standalone/fullscreen like a real app instead. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
   /* No external font imports — keeps this fully self-contained so it caches
      for offline use. Chalk-style headers use a cursive system-font stack
@@ -167,9 +173,18 @@
      800/460.5) keeps the resulting field height around 85vh regardless
      of how wide the screen actually is — using the same simple
      width:100%/height:auto SVG rule above, no distortion, no
-     percentage-height edge cases. This rule only fires above 700px,
-     so it's fully isolated from phone-portrait sizing. */
-  @media (min-width: 700px){
+     percentage-height edge cases.
+
+     Scoped to landscape only (2026-09-08): a portrait tablet (iPad Mini
+     included) is TALL, not wide — vh there is large relative to the
+     screen's own width, so this cap was squeezing the field down to
+     ~65% of the available width for no reason, leaving dead margin on
+     both sides. Portrait tablets now fall through to the plain
+     width:100% rule below (same as phones), so the field fills the
+     .wrap column. The vh cap still applies once a screen is wider than
+     it is tall — laptops, and a tablet actually rotated to landscape —
+     which is the "absurdly tall field" case it was written to prevent. */
+  @media (min-width: 700px) and (orientation: landscape){
     .board-shell{
       max-width: 48vh;
       margin-left: auto;
@@ -413,6 +428,12 @@
   }
   .formation-btn:hover, .subtoggle-btn:hover{ border-color:var(--flag-gold); color:var(--chalk); }
   .formation-btn.active, .subtoggle-btn.active{ background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); }
+  .tap-clear-btn{ display:block; margin-top:10px; border-color:var(--off-red); color:var(--off-red); }
+  .tap-clear-btn:hover{ border-color:var(--off-red); color:#fff; background:rgba(226,84,74,0.15); }
+  .sync-indicator{ display:none; align-items:center; gap:5px; font-size:0.68rem; color:var(--chalk-dim); }
+  .sync-indicator .dot{ width:7px; height:7px; border-radius:50%; background:var(--chalk-dim); }
+  .sync-indicator.sync-on .dot{ background:var(--carrier-green); }
+  .sync-indicator.sync-off .dot{ background:var(--off-red); }
   .tap-hint{
     font-family:'Bradley Hand','Segoe Print','Chalkboard SE','Comic Sans MS',cursive;
     font-size:0.9rem;
@@ -487,8 +508,8 @@
   }
   .assign-option-btn:hover{ border-color:var(--flag-gold); }
   .assign-option-btn.current{ background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); }
-  .assign-option-btn.taken{ opacity:0.4; cursor:not-allowed; }
-  .assign-option-btn.taken:hover{ border-color:var(--panel-line); }
+  .assign-option-btn.taken{ opacity:0.6; cursor:pointer; }
+  .assign-option-btn.taken:hover{ border-color:var(--flag-gold); }
   .assign-option-btn .taken-at{ display:block; font-size:0.7rem; font-weight:400; opacity:0.8; margin-top:2px; }
   .assign-sheet-close{
     display:block;
@@ -597,6 +618,7 @@
         <button class="mode-btn active" id="interactionClassicBtn">Classic</button>
         <button class="mode-btn" id="interactionTapBtn">Tap to Assign</button>
       </div>
+      <span class="sync-indicator" id="syncIndicator"><span class="dot"></span><span class="sync-label">Synced</span></span>
     </div>
   </header>
 
@@ -808,6 +830,10 @@
     q.push(item);
     saveTrackingQueue(q);
     flushTrackingQueue();
+    // Independent of the Google Sheet path above — fires under either
+    // coach's seeded URL, live-sync connected or not (solo practice
+    // included), and is itself a no-op until Supabase is configured.
+    forwardEventToSupabase(eventName, detail || {});
   }
 
   function flushTrackingQueue(){
@@ -820,6 +846,148 @@
     saveTrackingQueue([]);
   }
   window.addEventListener('online', flushTrackingQueue);
+
+  // ---------- live sync (shared play/flip/roster state + event logging) ----------
+  // Auto-activates only under the coaches' own seeded URLs (?dev=russell /
+  // ?dev=cody) — anyone using the plain URL gets exactly today's fully
+  // solo/offline behavior, untouched. One-time setup: create a Supabase
+  // project, run team-sync-schema.sql there, paste the URL/key below.
+  // Same defensive pattern as flag-flow-team-sync.html throughout: a
+  // dynamic import inside try/catch, so no signal or unconfigured
+  // credentials just mean "behaves like solo mode," never a broken page.
+  const SUPABASE_URL = "https://imfwbikmumyitfmqbcxj.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_7fifS7gsBSwcY6oS9ZDVgg_NfS7qTv0";
+  // Shared secret both coaches' copies of this file must agree on — same
+  // trust model as Team Sync's team code. Change it if you want, just
+  // keep every deployed copy of this file in sync.
+  const SYNC_TEAM_CODE = "devore-flag-team";
+  const SYNC_ENABLED_SEEDS = ['russell', 'cody'];
+  const SYNC_NEEDS_SETUP = SUPABASE_URL.indexOf("PASTE_YOUR") === 0;
+  // DEVICE_ID is 'dev-seed-<value>' only when this load came in on a
+  // ?dev=<value> URL and this is the first time this browser's seen it
+  // (see getDeviceId above) — reused here rather than re-parsing the URL.
+  const SYNC_SEED = DEVICE_ID.indexOf('dev-seed-') === 0 ? DEVICE_ID.slice(9) : null;
+  const SYNC_ACTIVE = !SYNC_NEEDS_SETUP && SYNC_SEED && SYNC_ENABLED_SEEDS.indexOf(SYNC_SEED) !== -1;
+
+  let sb = null;
+  let applyingRemoteState = false;
+  let lastSyncSignature = null;
+
+  function updateSyncIndicator(ok){
+    const el = document.getElementById('syncIndicator');
+    if (!el) return;
+    el.style.display = SYNC_ACTIVE ? 'inline-flex' : 'none';
+    el.classList.toggle('sync-on', !!ok);
+    el.classList.toggle('sync-off', !ok);
+    const label = el.querySelector('.sync-label');
+    if (label) label.textContent = ok ? 'Synced' : 'Offline';
+    el.title = ok ? ('Synced with ' + SYNC_TEAM_CODE) : 'Offline — will retry automatically';
+  }
+
+  // Only the offense side of the workflow this was built for is synced —
+  // Cody calling positions out loud while Russell sets the play/roster.
+  // Defense roster rides along too (same shape, effectively free); which
+  // defensive look is loaded is not synced yet.
+  function currentSessionSnapshot(){
+    return {
+      current_play: currentPlay,
+      flipped: !!flippedPlays[currentPlay],
+      assignments: Object.assign({}, ASSIGNMENTS),
+      def_assignments: Object.assign({}, DEF_ASSIGNMENTS),
+    };
+  }
+
+  function pushSessionState(){
+    if (!sb || applyingRemoteState) return;
+    const snap = currentSessionSnapshot();
+    const sig = JSON.stringify(snap);
+    if (sig === lastSyncSignature) return; // nothing actually changed since our last push/pull
+    lastSyncSignature = sig;
+    sb.from('session_state').upsert(Object.assign({
+      team_code: SYNC_TEAM_CODE,
+      updated_at: new Date().toISOString(),
+    }, snap)).then(({error})=> updateSyncIndicator(!error)).catch(()=> updateSyncIndicator(false));
+  }
+
+  function applyRemoteState(row){
+    applyingRemoteState = true;
+    try{
+      if (row.current_play && row.current_play !== currentPlay) setPlay(row.current_play);
+      if (!!flippedPlays[currentPlay] !== !!row.flipped) flipDesignedPlay();
+      if (row.assignments){
+        Object.keys(ASSIGNMENTS).forEach(k=> delete ASSIGNMENTS[k]);
+        Object.assign(ASSIGNMENTS, row.assignments);
+      }
+      if (row.def_assignments){
+        Object.keys(DEF_ASSIGNMENTS).forEach(k=> delete DEF_ASSIGNMENTS[k]);
+        Object.assign(DEF_ASSIGNMENTS, row.def_assignments);
+      }
+      drawRoutePreviews();
+      buildLineupPanel();
+      if (typeof buildDefenseLineupPanel === 'function') buildDefenseLineupPanel();
+      render();
+    } finally {
+      applyingRemoteState = false;
+    }
+  }
+
+  async function pollSessionState(){
+    if (!sb) return;
+    try{
+      const { data, error } = await sb.from('session_state').select('*').eq('team_code', SYNC_TEAM_CODE).maybeSingle();
+      if (error) throw error;
+      updateSyncIndicator(true);
+      if (!data) return; // no one has set anything yet
+      const sig = JSON.stringify({
+        current_play: data.current_play, flipped: !!data.flipped,
+        assignments: data.assignments || {}, def_assignments: data.def_assignments || {},
+      });
+      if (sig === lastSyncSignature) return; // it's our own last write, or genuinely unchanged
+      applyRemoteState(data);
+      lastSyncSignature = sig;
+    }catch(err){ updateSyncIndicator(false); }
+  }
+
+  async function initSync(){
+    if (!SYNC_ACTIVE) return;
+    let createClient;
+    try{
+      ({ createClient } = await import('https://esm.sh/@supabase/supabase-js@2'));
+    }catch(err){ return; } // no signal / blocked at load time — stays fully solo, exactly like today
+    sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { 'x-team-code': SYNC_TEAM_CODE } },
+      auth: { persistSession:false },
+    });
+    updateSyncIndicator(true);
+    pollSessionState(); // catch up immediately if joining a session already in progress
+    setInterval(()=>{ if (!document.hidden) pollSessionState(); }, 4000);
+    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) pollSessionState(); });
+  }
+
+  // Every logEvent() call already goes to the Google Sheet (unchanged,
+  // stays in place as a QA cross-check) — this adds the same event, as-is,
+  // to a Supabase table too, when sync is configured, so it becomes real
+  // queryable data instead of text in spreadsheet cells. Independent of
+  // whether live-sync is active: fires for solo practice too, under
+  // either coach's own seeded URL — only depends on Supabase being
+  // configured, not on the other coach being connected right now.
+  function forwardEventToSupabase(eventName, detail){
+    if (!sb) return;
+    const row = {
+      team_code: SYNC_TEAM_CODE,
+      coach: SYNC_SEED,
+      event_type: eventName,
+      detail: detail || {},
+    };
+    if (eventName === 'play_result'){
+      row.play = detail && detail.offense ? detail.offense.play : null;
+      row.down = detail ? detail.down : null;
+      row.phase = detail ? detail.phase : null;
+      row.result = detail ? detail.result : null;
+      row.carrier_name = detail ? detail.carrierName : null;
+    }
+    sb.from('events').insert(row).catch(()=>{}); // best-effort, matches the Sheet's own no-cors fire-and-forget
+  }
 
   // ---------- yard scale ----------
   // LOS_X is the pixel x-position of the line of scrimmage; YARD_PX is
@@ -5334,6 +5502,7 @@
     buildLineupPanel();
     updateGlobalFlipVisibility();
     render();
+    pushSessionState();
   }
 
   function setDefense(key){
@@ -5595,9 +5764,17 @@
   function mirrorWaypointsY(waypoints){
     return waypoints.map(wp => Object.assign({}, wp, { y: 2*CENTER_Y - wp.y }));
   }
+  // Tracks flip state per play key — flipDesignedPlay() mutates PLAYS[key]'s
+  // geometry directly rather than storing a boolean, so this is the only
+  // record of "is the play currently loaded mirrored from its original."
+  // Needed for live sync: the other device can't copy mutated coordinates
+  // wholesale, but it CAN call flipDesignedPlay() itself to reach the same
+  // state, and needs to know whether that call is required.
+  let flippedPlays = {};
   function flipDesignedPlay(){
     const play = PLAYS[currentPlay];
     if (!play || !play.routes) return;
+    flippedPlays[currentPlay] = !flippedPlays[currentPlay];
     logEvent('flip', {context:'designed_play', play: currentPlay});
     // Mirror every slot's own route in place first...
     Object.keys(play.routes).forEach(key=>{ play.routes[key] = mirrorWaypointsY(play.routes[key]); });
@@ -5619,6 +5796,7 @@
     buildTapControls();
     buildLineupPanel();
     render();
+    pushSessionState();
   }
 
   document.getElementById('globalFlipBtn').onclick = ()=>{
@@ -5731,6 +5909,24 @@
     // Defense: nothing to show here yet — no defensive plays exist to pick
     // from. Leave the Playbook dropdown blank rather than showing an
     // unrelated hint; revisit once defensive plays are built out.
+
+    // Safety valve alongside the bump-on-tap fix above: sometimes you just
+    // want a clean slate for this side of the ball rather than moving kids
+    // one at a time. Clears only the side (offense/defense) currently open.
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'subtoggle-btn tap-clear-btn';
+    clearBtn.textContent = 'Clear all ' + currentMode + ' positions';
+    clearBtn.onclick = ()=> clearAllAssignments(currentMode);
+    panel.appendChild(clearBtn);
+  }
+
+  function clearAllAssignments(context){
+    const assignmentsObj = context === 'defense' ? DEF_ASSIGNMENTS : ASSIGNMENTS;
+    Object.keys(assignmentsObj).forEach(k=> delete assignmentsObj[k]);
+    logEvent('clear_assignments', {context});
+    drawRoutePreviews();
+    render();
+    pushSessionState();
   }
 
   // ---------- assign sheet (the tap-to-assign popup) ----------
@@ -5768,8 +5964,20 @@
         sub.className = 'taken-at';
         sub.textContent = 'already at ' + (roleNamesForContext[takenSlot] || takenSlot);
         b.appendChild(sub);
-        b.disabled = true;
-        b.title = name + ' is already assigned to ' + (roleNamesForContext[takenSlot] || takenSlot) + ' — clear that spot first to move them here.';
+        b.title = 'Move ' + name + ' here from ' + (roleNamesForContext[takenSlot] || takenSlot) + '.';
+        // Bump, don't block: tapping a "taken" name moves them here from
+        // wherever they currently are — including a slot that belongs to
+        // a different play's formation and isn't shown anywhere in the
+        // CURRENTLY loaded play (e.g. assigned under a pro-set play's
+        // WR_L, then a single-back play using X/Y is loaded — there's no
+        // WR_L button here to clear them from). Without this a kid could
+        // get stuck on whichever play they were last placed in.
+        b.onclick = ()=>{
+          delete assignmentsObj[takenSlot];
+          assignmentsObj[slot] = name;
+          logEvent('roster_assign', {context:'tap_'+context, slot, player:name, movedFrom:takenSlot});
+          onChange(); rerenderSheetBody();
+        };
       } else {
         b.onclick = ()=>{ assignmentsObj[slot] = name; logEvent('roster_assign', {context:'tap_'+context, slot, player:name}); onChange(); rerenderSheetBody(); };
       }
@@ -5870,6 +6078,7 @@
     drawRoutePreviews();
     render();
     if (currentSheetRender) currentSheetRender();
+    pushSessionState();
   }
   function regenerateActivePlay(){
     if (currentDefense === 'customDefense'){ regenerateCustomDefense(); buildDefenseBuilderPanel(); }
@@ -5984,11 +6193,21 @@
     if (currentDefense === 'customDefense'){
       defenseDetail.paths = Object.assign({}, customDefense.paths);
     }
+    // Same carrier-detection logic drawPlayers() uses for the on-field
+    // highlight — last stop in the play's throw/handoff chain — reused
+    // here so logged results carry an actual kid's name, not just a slot
+    // key, whenever that slot has a roster assignment.
+    const chain = throwChain(PLAYS[currentPlay]);
+    const carrierSlot = chain.length ? chain[chain.length-1].to : null;
+    if (carrierSlot){
+      offenseDetail.carrierSlot = carrierSlot;
+    }
     return {
       offense: offenseDetail,
       defense: defenseDetail,
       offenseRoster: Object.assign({}, ASSIGNMENTS),
-      defenseRoster: Object.assign({}, DEF_ASSIGNMENTS)
+      defenseRoster: Object.assign({}, DEF_ASSIGNMENTS),
+      carrierName: carrierSlot ? (ASSIGNMENTS[carrierSlot] || null) : null
     };
   }
 
@@ -6131,6 +6350,7 @@
   // on one.
   setInteractionMode('tap');
   document.getElementById('setupDetails').open = false;
+  initSync(); // no-op unless loaded via ?dev=russell/?dev=cody with real Supabase credentials in place
 
   // ---------- click-outside to close Setup ----------
   // Tapping anywhere outside the Setup panel collapses it (keeping
