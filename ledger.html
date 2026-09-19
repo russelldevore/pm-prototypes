@@ -1,0 +1,842 @@
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=Libre+Franklin:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+.ledger-root {
+  --paper: #EFE9DA;
+  --paper-deep: #E4DCC5;
+  --line: #C9BEA1;
+  --ink: #24201A;
+  --ink-soft: #6B6252;
+  --forest: #3E4F35;
+  --rust: #A8482A;
+  --brass: #A6822B;
+
+  font-family: 'Libre Franklin', -apple-system, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+  box-sizing: border-box;
+}
+.ledger-root * { box-sizing: border-box; }
+.ledger-root h1, .ledger-root h2, .ledger-root h3, .ledger-root .display {
+  font-family: 'Special Elite', 'IBM Plex Mono', monospace;
+  letter-spacing: 0.02em;
+}
+.ledger-root .mono { font-family: 'IBM Plex Mono', monospace; }
+
+.lg-header { padding: 22px 20px 14px; border-bottom: 1px solid var(--line); background: var(--paper-deep); }
+.lg-header h1 { font-size: 20px; margin: 0 0 2px; color: var(--ink); }
+.lg-header .lg-sub { font-size: 12px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.08em; }
+
+.lg-stamps { display: flex; justify-content: space-between; padding: 16px 20px 4px; gap: 8px; }
+.lg-stamp { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.lg-stamp svg { width: 30px; height: 30px; transition: all 0.25s ease; }
+.lg-stamp .ring { fill: none; stroke: var(--line); stroke-width: 1.4; }
+.lg-stamp .mark { fill: none; stroke: var(--ink-soft); stroke-width: 1.6; opacity: 0.55; }
+.lg-stamp.filled .ring { stroke: var(--forest); }
+.lg-stamp.filled .mark { stroke: var(--forest); opacity: 1; }
+.lg-stamp .lbl { font-size: 8.5px; text-align: center; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.15; }
+
+.lg-streak { margin: 14px 20px 0; padding: 10px 14px; border: 1px solid var(--line); background: rgba(166,130,43,0.08); display: flex; align-items: baseline; justify-content: space-between; }
+.lg-streak .n { font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: var(--brass); font-weight: 600; }
+.lg-streak .t { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.lg-section { padding: 18px 20px 4px; }
+.lg-section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-soft); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.lg-section h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-soft); margin: 14px 0 8px; }
+
+.lg-row { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; border-bottom: 1px dashed var(--line); }
+.lg-row:last-child { border-bottom: none; }
+.lg-check { width: 22px; height: 22px; min-width: 22px; border: 1.6px solid var(--ink-soft); margin-top: 1px; display: flex; align-items: center; justify-content: center; cursor: pointer; background: transparent; transition: all 0.15s ease; }
+.lg-check.done { background: var(--forest); border-color: var(--forest); }
+.lg-check svg { width: 13px; height: 13px; opacity: 0; transition: opacity 0.15s; }
+.lg-check.done svg { opacity: 1; }
+.lg-row-body { flex: 1; min-width: 0; }
+.lg-row-label { font-size: 14.5px; font-weight: 500; line-height: 1.3; }
+.lg-row-label.done { text-decoration: line-through; color: var(--ink-soft); }
+.lg-row-goal { font-size: 11px; color: var(--brass); margin-top: 2px; font-style: italic; }
+.lg-row-meta { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+.lg-row textarea, .lg-row input[type=text] {
+  width: 100%; margin-top: 6px; font-family: 'Libre Franklin', sans-serif; font-size: 13px;
+  border: 1px solid var(--line); background: #fff; padding: 8px; resize: vertical; min-height: 38px;
+}
+
+.lg-eo { display: flex; gap: 6px; margin-top: 6px; }
+.lg-eo button { flex: 1; font-size: 11.5px; padding: 6px 8px; border: 1px solid var(--line); background: #fff; color: var(--ink-soft); cursor: pointer; text-align: left; font-family: 'Libre Franklin', sans-serif; }
+.lg-eo button.sel { border-color: var(--forest); color: var(--ink); background: rgba(62,79,53,0.09); font-weight: 600; }
+.lg-eo.quickfill button.sel { border-color: var(--brass); background: rgba(166,130,43,0.12); }
+
+.lg-empty { font-size: 13px; color: var(--ink-soft); font-style: italic; padding: 8px 0; }
+
+.lg-hydro { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lg-hydro-count { font-size: 26px; font-weight: 600; color: var(--forest); }
+.lg-hydro-sub { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+.lg-drops { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.lg-drop-wrap svg { width: 15px; height: 15px; }
+.lg-drop-wrap .drop { fill: none; stroke: var(--line); stroke-width: 1.3; }
+.lg-drop-wrap.filled .drop { fill: var(--forest); stroke: var(--forest); }
+.lg-hydro-btns { display: flex; gap: 8px; margin-top: 10px; }
+.lg-hydro-btns button { flex: 1; }
+
+.lg-btn { font-family: 'Libre Franklin', sans-serif; font-size: 13px; font-weight: 600; padding: 10px 16px; border: 1.5px solid var(--ink); background: var(--ink); color: var(--paper); cursor: pointer; }
+.lg-btn.outline { background: transparent; color: var(--ink); }
+.lg-btn.rust { background: var(--rust); border-color: var(--rust); color: #fff; }
+.lg-btn.block { width: 100%; }
+.lg-btn.sm { padding: 6px 10px; font-size: 11.5px; }
+
+.lg-card { border: 1px solid var(--line); background: #fff; padding: 12px 14px; margin-bottom: 10px; }
+.lg-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.lg-card-name { font-size: 14.5px; font-weight: 600; }
+.lg-status { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 7px; border: 1px solid; white-space: nowrap; }
+.lg-status.active { color: var(--forest); border-color: var(--forest); }
+.lg-status.cooling { color: var(--brass); border-color: var(--brass); }
+.lg-status.parked { color: var(--ink-soft); border-color: var(--line); }
+.lg-status.dormant { color: var(--ink-soft); border-color: var(--line); opacity: 0.6; }
+.lg-card-roles { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.lg-role-tag { font-size: 9.5px; padding: 2px 6px; background: var(--paper-deep); color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.03em; }
+.lg-card-meta { font-size: 11.5px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
+.lg-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+.lg-stale-flag { font-size: 10.5px; color: var(--rust); margin-top: 6px; font-weight: 600; }
+
+.lg-form { display: flex; flex-direction: column; gap: 10px; }
+.lg-form label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); display: block; margin-bottom: 3px; }
+.lg-form input[type=text], .lg-form select, .lg-form textarea { width: 100%; font-family: 'Libre Franklin', sans-serif; font-size: 14px; padding: 8px; border: 1px solid var(--line); background: #fff; }
+.lg-checkgrid { display: flex; flex-wrap: wrap; gap: 6px; }
+.lg-chip { font-size: 11.5px; padding: 5px 10px; border: 1px solid var(--line); cursor: pointer; background: #fff; color: var(--ink-soft); }
+.lg-chip.sel { border-color: var(--forest); background: rgba(62,79,53,0.1); color: var(--ink); font-weight: 600; }
+
+.lg-review-block { margin-bottom: 16px; }
+.lg-review-item { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+
+.lg-nav {
+  position: sticky;
+  bottom: 0;
+  background: var(--paper-deep);
+  border-top: 1px solid var(--line);
+  display: flex;
+  z-index: 10;
+}
+.lg-nav button { flex: 1; padding: 12px 0 10px; background: none; border: none; font-family: 'Libre Franklin', sans-serif; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); cursor: pointer; }
+.lg-nav button.active { color: var(--ink); font-weight: 700; border-top: 2px solid var(--forest); margin-top: -1px; }
+
+.lg-view { display: none; }
+.lg-view.active { display: block; }
+
+.lg-loading { padding: 60px 20px; text-align: center; color: var(--ink-soft); font-size: 13px; }
+.lg-data-box { border: 1px solid var(--line); background: #fff; padding: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
+.lg-toast { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 8px 16px; font-size: 12.5px; z-index: 50; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
+.lg-toast.show { opacity: 1; }
+.lg-warn { font-size: 11px; color: var(--rust); padding: 6px 20px 0; }
+
+.lg-auth { padding: 60px 24px; }
+.lg-auth h1 { font-size: 20px; margin-bottom: 4px; }
+.lg-auth p { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 20px; }
+.lg-auth input { width: 100%; font-family: 'Libre Franklin', sans-serif; font-size: 14px; padding: 10px; border: 1px solid var(--line); background: #fff; margin-bottom: 10px; }
+.lg-auth-err { font-size: 12px; color: var(--rust); margin: 6px 0; min-height: 14px; }
+.lg-auth-toggle { font-size: 12px; color: var(--ink-soft); text-align: center; margin-top: 14px; text-decoration: underline; cursor: pointer; }
+</style>
+
+<div class="ledger-root" id="lg-root">
+  <div class="lg-loading" id="lg-loading">Opening the ledger...</div>
+</div>
+
+<script>
+(function(){
+
+const ROLES = [
+  { id: 'warrior', name: 'Warrior', full: 'Warrior of God' },
+  { id: 'pm',      name: 'Builder', full: 'PM & Entrepreneur' },
+  { id: 'elk',     name: 'Hunter',  full: 'Elk Hunter' },
+  { id: 'family',  name: 'Husband/Father', full: 'Husband & Father' },
+  { id: 'farmer',  name: 'Farmer',  full: 'Farmer' },
+];
+
+function glyph(roleId){
+  const marks = {
+    warrior: '<path class="mark" d="M15 6 L15 24 M8 12 L22 12"/>',
+    pm:      '<path class="mark" d="M15 8 L20 12 L20 18 L15 22 L10 18 L10 12 Z M15 13 a2.3 2.3 0 1 0 0.1 0"/>',
+    elk:     '<path class="mark" d="M15 22 L15 12 M15 12 C11 12 9 8 6 8 M15 12 C19 12 21 8 24 8 M9 8 C9 8 8 6 6 6 M21 8 C21 8 22 6 24 6"/>',
+    family:  '<path class="mark" d="M8 22 L8 13 L15 7 L22 13 L22 22 L17 22 L17 16 L13 16 L13 22 Z"/>',
+    farmer:  '<path class="mark" d="M15 24 L15 10 M15 10 C12 10 10 7 10 5 C13 5 15 7 15 10 M15 10 C18 10 20 7 20 5 C17 5 15 7 15 10 M9 24 L21 24"/>',
+  };
+  return '<svg viewBox="0 0 30 30"><circle class="ring" cx="15" cy="15" r="13"/>' + marks[roleId] + '</svg>';
+}
+
+function dropSvg(){
+  return '<svg viewBox="0 0 16 16"><path class="drop" d="M8 1.5 C8 1.5 13.5 9 13.5 12 A5.5 5.5 0 1 1 2.5 12 C2.5 9 8 1.5 8 1.5 Z"/></svg>';
+}
+
+const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function defaultWorkstreams(){
+  return [
+    // fixed items — always daily, no day assignment needed
+    { id: 'fx_warrior',  name: 'Prayer / gratitude / study', roles: ['warrior'], status: 'active', type: 'fixed', days: [], goal: 'Ten focused minutes, same time daily.', optionA: '', optionB: '', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'fx_fitness',  name: 'Fitness & mobility',         roles: ['warrior','elk','family'], status: 'active', type: 'fixed', days: [], goal: 'Stay strong and mobile for elk season and everything else.', optionA: 'Ruck', optionB: 'Lift', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'fx_nutrition',name: 'Nutrition',                  roles: [], status: 'active', type: 'fixed', days: [], goal: 'Lightweight signal, not a tracking project.', optionA: 'On plan', optionB: 'Off plan, noted why', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'fx_family',   name: 'Family presence',            roles: ['family'], status: 'active', type: 'fixed', days: [], goal: 'Show up, undistracted, even briefly.', optionA: '', optionB: '', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'fx_journal',  name: 'Farmer journal',             roles: ['farmer'], status: 'active', type: 'fixed', days: [], goal: 'Capture what was done and what would otherwise be forgotten by next season.', optionA: '', optionB: '', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    // rotators — compete for daily slots by weekday assignment
+    { id: 'ws_job',      name: 'Job search',                     roles: ['pm'],           status: 'active',  type: 'rotator', days: ['Mon','Wed','Fri'], goal: 'Land a role that doesn\u2019t eat the whole clock.', optionA: 'Send 2 applications', optionB: 'Reach out to 1 contact', nextAction: 'Identify 3 target roles', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_book',     name: 'Book / compendium',               roles: ['pm'],           status: 'active',  type: 'rotator', days: ['Tue'],             goal: 'Finish a complete first draft.', optionA: 'Write 300 words', optionB: 'Outline next section', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_posting',  name: 'Posting effort',                  roles: ['pm'],           status: 'cooling', type: 'rotator', days: ['Thu'],             goal: 'Build a real audience, consistently.', optionA: 'Draft one post', optionB: 'Engage on 3 threads', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_elk',      name: 'Learning project / elk work',     roles: ['elk'],          status: 'active',  type: 'rotator', days: ['Sat'],             goal: 'Be genuinely ready for the season.', optionA: 'Study terrain / e-scouting', optionB: 'Gear prep / practice', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_property', name: 'Property management',             roles: ['farmer'],       status: 'active',  type: 'rotator', days: ['Sun'],             goal: 'Keep the 6.5 acres ahead of you, not behind.', optionA: 'Knock out one task on the list', optionB: 'Walk the property, note what needs doing', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_coach',    name: 'Coaching / developing kids',      roles: ['family'],       status: 'active',  type: 'rotator', days: ['Wed','Sat'],       goal: 'Be intentional about how they develop, not just present.', optionA: 'Structured practice session', optionB: 'Casual skill time, low pressure', nextAction: '', lastTouched: null, staleWeeks: 0 },
+    { id: 'ws_skills',   name: 'Physical skills (shoot/archery/golf)', roles: ['warrior','elk'], status: 'active', type: 'rotator', days: ['Sun'],       goal: 'Real, measurable improvement, not just reps.', optionA: 'Range / focused reps', optionB: 'Play a relaxed round or casual session', nextAction: '', lastTouched: null, staleWeeks: 0 },
+  ];
+}
+
+// ---------- storage layer: Supabase (synced) -> Claude native storage -> localStorage (last resort) ----------
+const SUPABASE_URL = 'https://hufgomwthvijmivtuxwl.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_IA2-iSrpbXoGT6bIwby8jQ_KbrAuHy2';
+
+function supabaseConfigured(){ return !!(SUPABASE_URL && SUPABASE_KEY); }
+function nativeAvailable(){
+  return typeof window !== 'undefined' && window.storage && typeof window.storage.get === 'function';
+}
+async function fetchWithTimeout(url, opts, ms){
+  ms = ms || 6000;
+  const controller = new AbortController();
+  const timer = setTimeout(function(){ controller.abort(); }, ms);
+  try {
+    return await fetch(url, Object.assign({}, opts, { signal: controller.signal }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function getStoredSession(){
+  try { return JSON.parse(localStorage.getItem('ledger_auth_session')); } catch(e){ return null; }
+}
+function storeSession(s){ try { localStorage.setItem('ledger_auth_session', JSON.stringify(s)); } catch(e){} }
+function clearSession(){ try { localStorage.removeItem('ledger_auth_session'); } catch(e){} }
+
+async function authSignUp(email, password){
+  const res = await fetchWithTimeout(SUPABASE_URL + '/auth/v1/signup', {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, password: password })
+  }, 8000);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.msg || data.error_description || 'Sign up failed');
+  return data;
+}
+async function authSignIn(email, password){
+  const res = await fetchWithTimeout(SUPABASE_URL + '/auth/v1/token?grant_type=password', {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email, password: password })
+  }, 8000);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Sign in failed');
+  return data;
+}
+async function authRefresh(refresh_token){
+  try {
+    const res = await fetchWithTimeout(SUPABASE_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refresh_token })
+    }, 8000);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch(e){ return null; }
+}
+async function getValidAccessToken(){
+  const s = getStoredSession();
+  if (!s) return null;
+  if (s.expires_at && Date.now() < s.expires_at - 30000) return s.access_token;
+  const r = await authRefresh(s.refresh_token);
+  if (!r || !r.access_token){ clearSession(); return null; }
+  const ns = { access_token: r.access_token, refresh_token: r.refresh_token || s.refresh_token, expires_at: Date.now() + (r.expires_in || 3600) * 1000 };
+  storeSession(ns);
+  return ns.access_token;
+}
+function authHeader(){
+  return state.accessToken ? state.accessToken : SUPABASE_KEY;
+}
+
+async function supaGet(key){
+  try {
+    const res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/ledger_kv?key=eq.' + encodeURIComponent(key) + '&select=value', {
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + authHeader() }
+    });
+    if (!res.ok) return { ok: false };
+    const rows = await res.json();
+    return rows.length ? { ok: true, found: true, value: rows[0].value } : { ok: true, found: false };
+  } catch(e){ return { ok: false }; }
+}
+async function supaSet(key, val){
+  try {
+    const res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/ledger_kv?on_conflict=key', {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: 'Bearer ' + authHeader(),
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify([{ key: key, value: val, updated_at: new Date().toISOString() }])
+    });
+    if (!res.ok){ console.warn('Supabase write rejected', res.status, await res.text()); }
+    return res.ok;
+  } catch(e){ return false; }
+}
+async function supaList(prefix){
+  try {
+    const res = await fetchWithTimeout(SUPABASE_URL + '/rest/v1/ledger_kv?key=like.' + encodeURIComponent(prefix) + '*&select=key', {
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + authHeader() }
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    return rows.map(function(r){ return r.key; });
+  } catch(e){ return null; }
+}
+
+async function sGet(key, fallback){
+  if (supabaseConfigured()){
+    const r = await supaGet(key);
+    if (r.ok){ state.syncBackend = 'supabase'; return r.found ? r.value : fallback; }
+  }
+  if (nativeAvailable()){
+    try {
+      const r = await window.storage.get(key);
+      state.syncBackend = 'native';
+      return r ? JSON.parse(r.value) : fallback;
+    } catch(e){ /* fall through */ }
+  }
+  try {
+    const raw = localStorage.getItem('ledger:' + key);
+    state.syncBackend = 'local';
+    return raw !== null ? JSON.parse(raw) : fallback;
+  } catch(e){ return fallback; }
+}
+async function sSet(key, val){
+  if (supabaseConfigured()){
+    const ok = await supaSet(key, val);
+    if (ok){ state.syncBackend = 'supabase'; return true; }
+    console.warn('Supabase write failed, falling back', key);
+  }
+  if (nativeAvailable()){
+    try { await window.storage.set(key, JSON.stringify(val)); state.syncBackend = 'native'; return true; } catch(e){ console.warn('native storage set failed, falling back', key, e); }
+  }
+  try { localStorage.setItem('ledger:' + key, JSON.stringify(val)); state.syncBackend = 'local'; return true; } catch(e){ console.error('local storage set failed', key, e); return false; }
+}
+async function sListKeys(prefix){
+  if (supabaseConfigured()){
+    const keys = await supaList(prefix);
+    if (keys !== null) return keys;
+  }
+  if (nativeAvailable()){
+    try { const r = await window.storage.list(prefix); if (r && r.keys) return r.keys; } catch(e){ /* fall through */ }
+  }
+  try {
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (k && k.indexOf('ledger:' + prefix) === 0) out.push(k.slice(7));
+    }
+    return out;
+  } catch(e){ return []; }
+}
+
+
+
+function todayISO(d){
+  d = d || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return y + '-' + m + '-' + day;
+}
+function weekdayOf(iso){ const d = new Date(iso + 'T12:00:00'); return WEEKDAYS[d.getDay()]; }
+function daysAgo(n){ const d = new Date(); d.setDate(d.getDate()-n); return d; }
+function saturdayOfWeek(iso){
+  const d = new Date(iso + 'T12:00:00');
+  const diff = 6 - d.getDay();
+  d.setDate(d.getDate() + diff);
+  return todayISO(d);
+}
+
+let state = { workstreams: [], daily: {}, weekly: {}, view: 'today', syncBackend: null };
+
+function itemsForToday(iso){
+  const wd = weekdayOf(iso);
+  return state.workstreams.filter(w => {
+    if (w.status !== 'active') return false;
+    if (w.type === 'fixed') return true;
+    return w.days.includes(wd);
+  });
+}
+
+function emptyDaily(iso){
+  const items = {};
+  itemsForToday(iso).forEach(w => { items[w.id] = { done: false, chosen: null, note: '' }; });
+  return { date: iso, items: items, hydration: { ounces: 0 }, wildcard: { text: '', roles: [], done: false }, allComplete: false };
+}
+
+async function loadAll(){
+  state.workstreams = await sGet('workstreams', null);
+  if (!state.workstreams){ state.workstreams = defaultWorkstreams(); await sSet('workstreams', state.workstreams); }
+
+  const iso = todayISO();
+  let d = await sGet('daily:' + iso, null);
+  if (!d || !d.items){ d = emptyDaily(iso); }
+  else {
+    // reconcile: add any newly-eligible items that weren't present yet
+    itemsForToday(iso).forEach(w => { if (!d.items[w.id]) d.items[w.id] = { done: false, chosen: null, note: '' }; });
+    if (!d.hydration) d.hydration = { ounces: 0 };
+  }
+  state.daily[iso] = d;
+
+  const satIso = saturdayOfWeek(iso);
+  state.weekly[satIso] = await sGet('weekly:' + satIso, { date: satIso, winsLosses: '', completed: false });
+}
+
+function computeAllComplete(entry){
+  const ids = Object.keys(entry.items);
+  if (ids.length === 0) return false;
+  return ids.every(id => entry.items[id].done);
+}
+
+async function refreshStreak(){
+  const iso = todayISO();
+  const entry = state.daily[iso];
+  const complete = computeAllComplete(entry);
+  let streak = await sGet('streakCount', 0);
+  let lastComplete = await sGet('streakLastDate', null);
+  if (complete && lastComplete !== iso){
+    const y = todayISO(daysAgo(1));
+    streak = (lastComplete === y || lastComplete === null) ? streak + 1 : 1;
+    await sSet('streakCount', streak);
+    await sSet('streakLastDate', iso);
+  } else if (!complete && lastComplete === iso) {
+    streak = Math.max(0, streak - 1);
+    await sSet('streakCount', streak);
+    await sSet('streakLastDate', null);
+  }
+  state.streakCache = streak;
+}
+
+function toast(msg){
+  const t = document.getElementById('lg-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function(){ t.classList.remove('show'); }, 1600);
+}
+
+async function render(){
+  const root = document.getElementById('lg-root');
+  const iso = todayISO();
+  const entry = state.daily[iso];
+  entry.allComplete = computeAllComplete(entry);
+
+  const rolesTouchedToday = new Set();
+  Object.keys(entry.items).forEach(function(id){
+    if (entry.items[id].done){
+      const w = state.workstreams.find(function(x){ return x.id === id; });
+      if (w) w.roles.forEach(function(r){ rolesTouchedToday.add(r); });
+    }
+  });
+  if (entry.wildcard.done) entry.wildcard.roles.forEach(function(r){ rolesTouchedToday.add(r); });
+
+  root.innerHTML =
+    '<div class="lg-header"><h1>The Ledger</h1><div class="lg-sub">' +
+    new Date().toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'}) +
+    '</div></div>' +
+    (state.syncBackend === 'supabase' ? '' : '<div class="lg-warn">' + (state.syncBackend === 'native' ? 'Sync unavailable \u2014 saving in this Claude session only, changes won\u2019t reach other devices until reconnected.' : 'Sync unavailable \u2014 saving to this browser only, changes won\u2019t reach other devices until reconnected.') + '</div>') +
+    '<div class="lg-stamps">' +
+    ROLES.map(function(r){ return '<div class="lg-stamp ' + (rolesTouchedToday.has(r.id)?'filled':'') + '">' + glyph(r.id) + '<div class="lbl">' + r.name + '</div></div>'; }).join('') +
+    '</div>' +
+    '<div class="lg-streak"><div><div class="n mono">' + (state.streakCache||0) + '</div><div class="t">day streak</div></div>' +
+    '<div class="t" style="text-align:right;">' + (entry.allComplete ? 'Day complete' : 'In progress') + '</div></div>' +
+    '<div class="lg-view ' + (state.view==='today'?'active':'') + '" id="view-today"></div>' +
+    '<div class="lg-view ' + (state.view==='registry'?'active':'') + '" id="view-registry"></div>' +
+    '<div class="lg-view ' + (state.view==='review'?'active':'') + '" id="view-review"></div>' +
+    '<div class="lg-view ' + (state.view==='data'?'active':'') + '" id="view-data"></div>' +
+    '<div class="lg-nav">' +
+    ['today','registry','review','data'].map(function(v){
+      const labels = { today: 'Today', registry: 'Registry', review: 'Review', data: 'Data' };
+      return '<button data-nav="' + v + '" class="' + (state.view===v?'active':'') + '">' + labels[v] + '</button>';
+    }).join('') +
+    '</div>' +
+    '<div class="lg-toast" id="lg-toast"></div>';
+
+  renderToday(entry);
+  renderRegistry();
+  renderReview();
+  renderData();
+  bindNav();
+}
+
+function itemRow(w, item){
+  const hasEO = w.optionA || w.optionB;
+  const isFixed = w.type === 'fixed';
+  let eoHtml = '';
+  if (hasEO){
+    eoHtml = '<div class="lg-eo ' + (isFixed ? 'quickfill' : '') + '">' +
+      '<button class="' + (item.chosen==='A'?'sel':'') + '" data-eo="' + w.id + '|A">' + (w.optionA || 'Option A') + '</button>' +
+      '<button class="' + (item.chosen==='B'?'sel':'') + '" data-eo="' + w.id + '|B">' + (w.optionB || 'Option B') + '</button>' +
+      '</div>';
+  }
+  return '<div class="lg-row">' +
+    '<div class="lg-check ' + (item.done?'done':'') + '" data-item="' + w.id + '">' +
+    '<svg viewBox="0 0 24 24" stroke="white" stroke-width="3" fill="none"><path d="M4 12 L10 18 L20 6"/></svg></div>' +
+    '<div class="lg-row-body">' +
+    '<div class="lg-row-label ' + (item.done?'done':'') + '">' + w.name + '</div>' +
+    (w.goal ? '<div class="lg-row-goal">' + w.goal + '</div>' : '') +
+    (!isFixed ? '<div class="lg-row-meta">' + w.roles.map(function(rl){ return ROLES.find(function(x){return x.id===rl;}).full; }).join(' \u00b7 ') + '</div>' : '') +
+    eoHtml +
+    '<textarea placeholder="What did you do / learn?" data-note="' + w.id + '">' + (item.note||'') + '</textarea>' +
+    '</div></div>';
+}
+
+function renderToday(entry){
+  const el = document.getElementById('view-today');
+  const fixed = state.workstreams.filter(function(w){ return w.type==='fixed' && entry.items[w.id]; });
+  const rotators = state.workstreams.filter(function(w){ return w.type==='rotator' && entry.items[w.id]; });
+  const oz = entry.hydration.ounces;
+  const cups = oz / 8;
+  const dropCount = Math.max(8, Math.ceil(cups));
+  let drops = '';
+  for (let i = 1; i <= dropCount; i++){
+    drops += '<div class="lg-drop-wrap ' + (i <= cups ? 'filled' : '') + '">' + dropSvg() + '</div>';
+  }
+
+  el.innerHTML =
+    '<div class="lg-section"><h2>Hydration</h2>' +
+    '<div class="lg-hydro"><div><div class="lg-hydro-count mono">' + oz + ' oz</div>' +
+    '<div class="lg-hydro-sub">' + cups + ' of 8 cups</div></div></div>' +
+    '<div class="lg-drops">' + drops + '</div>' +
+    '<div class="lg-hydro-btns"><button class="lg-btn" id="hydro-add">+ 8 oz</button>' +
+    '<button class="lg-btn outline" id="hydro-undo">Undo</button></div>' +
+    '</div>' +
+    '<div class="lg-section"><h2>Fixed</h2>' + fixed.map(function(w){ return itemRow(w, entry.items[w.id]); }).join('') + '</div>' +
+    '<div class="lg-section"><h2>Today\'s rotators</h2>' +
+    (rotators.length ? rotators.map(function(w){ return itemRow(w, entry.items[w.id]); }).join('') : '<div class="lg-empty">No rotators scheduled for today.</div>') +
+    '</div>' +
+    '<div class="lg-section"><h2>Wildcard</h2>' +
+    '<div class="lg-row"><div class="lg-check ' + (entry.wildcard.done?'done':'') + '" data-wildcard="1">' +
+    '<svg viewBox="0 0 24 24" stroke="white" stroke-width="3" fill="none"><path d="M4 12 L10 18 L20 6"/></svg></div>' +
+    '<div class="lg-row-body">' +
+    '<input type="text" id="wildcard-text" placeholder="What came up? (e.g. weeds with the kids)" value="' + (entry.wildcard.text||'').replace(/"/g,'&quot;') + '">' +
+    '<div class="lg-checkgrid" style="margin-top:6px;">' +
+    ROLES.map(function(r){ return '<div class="lg-chip ' + (entry.wildcard.roles.includes(r.id)?'sel':'') + '" data-wcrole="' + r.id + '">' + r.name + '</div>'; }).join('') +
+    '</div></div></div></div>';
+
+  const hydroAdd = el.querySelector('#hydro-add');
+  if (hydroAdd) hydroAdd.onclick = async function(){ entry.hydration.ounces += 8; await persistToday(); };
+  const hydroUndo = el.querySelector('#hydro-undo');
+  if (hydroUndo) hydroUndo.onclick = async function(){ entry.hydration.ounces = Math.max(0, entry.hydration.ounces - 8); await persistToday(); };
+
+  el.querySelectorAll('[data-item]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.item;
+      entry.items[id].done = !entry.items[id].done;
+      if (entry.items[id].done){
+        const w = state.workstreams.find(function(x){ return x.id === id; });
+        w.lastTouched = todayISO();
+        w.staleWeeks = 0;
+        await sSet('workstreams', state.workstreams);
+      }
+      await persistToday();
+    };
+  });
+  el.querySelectorAll('[data-note]').forEach(function(t){
+    t.onchange = async function(){ entry.items[t.dataset.note].note = t.value; await persistToday(); };
+  });
+  el.querySelectorAll('[data-eo]').forEach(function(b){
+    b.onclick = async function(){
+      const parts = b.dataset.eo.split('|');
+      const id = parts[0], opt = parts[1];
+      entry.items[id].chosen = entry.items[id].chosen === opt ? null : opt;
+      await persistToday();
+    };
+  });
+  el.querySelectorAll('[data-wcrole]').forEach(function(c){
+    c.onclick = async function(){
+      const id = c.dataset.wcrole;
+      const i = entry.wildcard.roles.indexOf(id);
+      if (i >= 0) entry.wildcard.roles.splice(i,1); else entry.wildcard.roles.push(id);
+      await persistToday();
+    };
+  });
+  const wcText = el.querySelector('#wildcard-text');
+  if (wcText) wcText.onchange = async function(){ entry.wildcard.text = wcText.value; await persistToday(); };
+  const wcCheck = el.querySelector('[data-wildcard]');
+  if (wcCheck) wcCheck.onclick = async function(){ entry.wildcard.done = !entry.wildcard.done; await persistToday(); };
+}
+
+async function persistToday(){
+  const iso = todayISO();
+  const ok = await sSet('daily:' + iso, state.daily[iso]);
+  if (!ok) toast('Save failed — check connection');
+  await refreshStreak();
+  render();
+}
+
+function renderRegistry(){
+  const el = document.getElementById('view-registry');
+  function section(title, list){
+    return '<h3>' + title + '</h3>' + (list.length ? list.map(function(w){
+      const stale = w.staleWeeks >= 3;
+      return '<div class="lg-card"><div class="lg-card-top"><div class="lg-card-name">' + w.name + '</div>' +
+        '<div class="lg-status ' + w.status + '">' + w.status + '</div></div>' +
+        '<div class="lg-card-roles">' + w.roles.map(function(r){ return '<div class="lg-role-tag">' + ROLES.find(function(x){return x.id===r;}).name + '</div>'; }).join('') + '</div>' +
+        '<div class="lg-card-meta">' +
+        (w.goal ? 'Goal: ' + w.goal + '<br>' : '') +
+        (w.type === 'rotator' ? 'Days: ' + (w.days.join(', ') || 'none set') + '<br>Next action: ' + (w.nextAction || '<em>none set</em>') + '<br>' : '') +
+        'Last touched: ' + (w.lastTouched || 'never') +
+        '</div>' +
+        (stale ? '<div class="lg-stale-flag">Stale — ' + w.staleWeeks + ' reviews without progress. Decide: recommit or downgrade.</div>' : '') +
+        '<div class="lg-card-actions"><button class="lg-btn sm outline" data-edit="' + w.id + '">Edit</button>' +
+        (w.type === 'rotator' ? '<button class="lg-btn sm outline" data-cycle="' + w.id + '">Cycle status</button>' : '') +
+        '</div></div>';
+    }).join('') : '<div class="lg-empty">None yet.</div>');
+  }
+
+  el.innerHTML = '<div class="lg-section"><h2>Registry</h2>' +
+    section('Fixed', state.workstreams.filter(function(w){ return w.type==='fixed'; })) +
+    section('Rotators', state.workstreams.filter(function(w){ return w.type==='rotator'; })) +
+    '<button class="lg-btn block" id="add-ws" style="margin-top:10px;">+ Add workstream</button>' +
+    '</div><div class="lg-section" id="ws-form-wrap"></div>';
+
+  el.querySelectorAll('[data-cycle]').forEach(function(b){
+    b.onclick = async function(){
+      const order = ['active','cooling','parked','dormant'];
+      const w = state.workstreams.find(function(x){return x.id===b.dataset.cycle;});
+      w.status = order[(order.indexOf(w.status)+1) % order.length];
+      await sSet('workstreams', state.workstreams);
+      toast(w.name + ' -> ' + w.status);
+      render();
+    };
+  });
+  el.querySelectorAll('[data-edit]').forEach(function(b){
+    b.onclick = function(){ showWsForm(state.workstreams.find(function(x){return x.id===b.dataset.edit;})); };
+  });
+  el.querySelector('#add-ws').onclick = function(){ showWsForm(null); };
+}
+
+function showWsForm(ws){
+  const wrap = document.getElementById('ws-form-wrap');
+  const isNew = !ws;
+  const w = ws || { id: 'ws_' + Date.now(), name:'', roles:[], status:'active', type:'rotator', days:[], goal:'', optionA:'', optionB:'', nextAction:'', lastTouched:null, staleWeeks:0 };
+  wrap.innerHTML =
+    '<h2>' + (isNew ? 'New workstream' : 'Edit workstream') + '</h2><div class="lg-form">' +
+    '<div><label>Name</label><input type="text" id="f-name" value="' + w.name.replace(/"/g,'&quot;') + '"></div>' +
+    '<div><label>Roles</label><div class="lg-checkgrid">' + ROLES.map(function(r){ return '<div class="lg-chip ' + (w.roles.includes(r.id)?'sel':'') + '" data-frole="' + r.id + '">' + r.name + '</div>'; }).join('') + '</div></div>' +
+    '<div><label>Type</label><div class="lg-checkgrid">' +
+    '<div class="lg-chip ' + (w.type==='rotator'?'sel':'') + '" data-ftype="rotator">Rotator</div>' +
+    '<div class="lg-chip ' + (w.type==='fixed'?'sel':'') + '" data-ftype="fixed">Fixed</div></div></div>' +
+    '<div id="f-days-wrap"><label>Days assigned (rotators only)</label><div class="lg-checkgrid">' + WEEKDAYS.map(function(d){ return '<div class="lg-chip ' + (w.days.includes(d)?'sel':'') + '" data-fday="' + d + '">' + d + '</div>'; }).join('') + '</div></div>' +
+    '<div><label>Goal</label><input type="text" id="f-goal" value="' + (w.goal||'').replace(/"/g,'&quot;') + '"></div>' +
+    '<div><label>Option A (either/or or quick-fill)</label><input type="text" id="f-optA" value="' + (w.optionA||'').replace(/"/g,'&quot;') + '"></div>' +
+    '<div><label>Option B</label><input type="text" id="f-optB" value="' + (w.optionB||'').replace(/"/g,'&quot;') + '"></div>' +
+    '<div><label>Next action</label><input type="text" id="f-next" value="' + (w.nextAction||'').replace(/"/g,'&quot;') + '"></div>' +
+    '<div style="display:flex;gap:8px;"><button class="lg-btn block" id="f-save">Save</button>' +
+    (!isNew ? '<button class="lg-btn outline block" id="f-delete">Delete</button>' : '') + '</div></div>';
+
+  wrap.querySelectorAll('[data-frole]').forEach(function(c){
+    c.onclick = function(){
+      const id = c.dataset.frole;
+      const i = w.roles.indexOf(id);
+      if (i>=0) w.roles.splice(i,1); else w.roles.push(id);
+      c.classList.toggle('sel');
+    };
+  });
+  wrap.querySelectorAll('[data-ftype]').forEach(function(c){
+    c.onclick = function(){
+      w.type = c.dataset.ftype;
+      wrap.querySelectorAll('[data-ftype]').forEach(function(x){x.classList.remove('sel');});
+      c.classList.add('sel');
+    };
+  });
+  wrap.querySelectorAll('[data-fday]').forEach(function(c){
+    c.onclick = function(){
+      const d = c.dataset.fday;
+      const i = w.days.indexOf(d);
+      if (i>=0) w.days.splice(i,1); else w.days.push(d);
+      c.classList.toggle('sel');
+    };
+  });
+  wrap.querySelector('#f-save').onclick = async function(){
+    w.name = wrap.querySelector('#f-name').value.trim();
+    w.goal = wrap.querySelector('#f-goal').value;
+    w.optionA = wrap.querySelector('#f-optA').value;
+    w.optionB = wrap.querySelector('#f-optB').value;
+    w.nextAction = wrap.querySelector('#f-next').value;
+    if (!w.name) { toast('Name it first'); return; }
+    if (isNew) state.workstreams.push(w);
+    await sSet('workstreams', state.workstreams);
+    toast('Saved');
+    await loadAll();
+    render();
+  };
+  if (!isNew) wrap.querySelector('#f-delete').onclick = async function(){
+    state.workstreams = state.workstreams.filter(function(x){return x.id!==w.id;});
+    await sSet('workstreams', state.workstreams);
+    toast('Deleted');
+    await loadAll();
+    render();
+  };
+}
+
+function renderReview(){
+  const el = document.getElementById('view-review');
+  const iso = todayISO();
+  const satIso = saturdayOfWeek(iso);
+  const rev = state.weekly[satIso];
+  const stale = state.workstreams.filter(function(w){ return w.staleWeeks >= 3; });
+  const untouched = state.workstreams.filter(function(w){
+    if (w.type === 'fixed') return false;
+    if (!w.lastTouched) return true;
+    const last = new Date(w.lastTouched + 'T12:00:00');
+    return (Date.now() - last.getTime()) / 86400000 > 10;
+  });
+
+  el.innerHTML = '<div class="lg-section"><h2>Weekly review \u2014 week of ' + satIso + '</h2>' +
+    '<div class="lg-review-block"><div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Stale flags (3+ reviews, no progress)</div>' +
+    (stale.length ? stale.map(function(w){ return '<div class="lg-review-item"><span>' + w.name + '</span><span class="mono">' + w.staleWeeks + '</span></div>'; }).join('') : '<div class="lg-empty">None flagged.</div>') +
+    '</div><div class="lg-review-block"><div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Cooling \u2014 10+ days untouched</div>' +
+    (untouched.length ? untouched.map(function(w){ return '<div class="lg-review-item"><span>' + w.name + '</span><span>' + (w.lastTouched||'never') + '</span></div>'; }).join('') : '<div class="lg-empty">Nothing cooling.</div>') +
+    '</div><div class="lg-review-block"><div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Wins vs. losses</div>' +
+    '<textarea id="rev-text" placeholder="What moved, what did not, why...">' + (rev.winsLosses||'') + '</textarea></div>' +
+    '<button class="lg-btn rust block" id="run-review">' + (rev.completed ? "Re-run this week's review" : "Run this week's review") + '</button></div>';
+
+  el.querySelector('#run-review').onclick = async function(){
+    state.workstreams.forEach(function(w){
+      if (w.type === 'fixed') return;
+      const touchedThisWeek = w.lastTouched && (Date.now() - new Date(w.lastTouched+'T12:00:00').getTime())/86400000 <= 7;
+      if (!touchedThisWeek && w.status === 'active') w.staleWeeks = (w.staleWeeks||0) + 1;
+      else if (touchedThisWeek) w.staleWeeks = 0;
+    });
+    await sSet('workstreams', state.workstreams);
+    rev.winsLosses = document.getElementById('rev-text').value;
+    rev.completed = true;
+    await sSet('weekly:' + satIso, rev);
+    toast('Review saved');
+    render();
+  };
+}
+
+function renderData(){
+  const el = document.getElementById('view-data');
+  el.innerHTML = '<div class="lg-section"><h2>Export / Import</h2>' +
+    '<p style="font-size:12.5px;color:var(--ink-soft);">Export everything as JSON to hand to Claude for reporting, or to back up / move devices.</p>' +
+    '<button class="lg-btn block" id="export-btn">Export JSON</button>' +
+    '<div class="lg-data-box" id="export-box" style="display:none;"></div>' +
+    '<div style="margin-top:16px;"><label style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);">Import JSON</label>' +
+    '<textarea id="import-box" placeholder="Paste exported JSON here..." style="width:100%;min-height:100px;font-family:\'IBM Plex Mono\',monospace;font-size:11px;border:1px solid var(--line);padding:8px;margin-top:6px;"></textarea>' +
+    '<button class="lg-btn outline block" id="import-btn" style="margin-top:8px;">Import</button></div>' +
+    (supabaseConfigured() ? '<button class="lg-btn outline block" id="signout-btn" style="margin-top:20px;">Sign out</button>' : '') +
+    '</div>';
+
+  const signoutBtn = el.querySelector('#signout-btn');
+  if (signoutBtn) signoutBtn.onclick = function(){ clearSession(); location.reload(); };
+
+  el.querySelector('#export-btn').onclick = async function(){
+    const dailyKeys = await sListKeys('daily:');
+    const weeklyKeys = await sListKeys('weekly:');
+    const dump = { workstreams: state.workstreams, daily: {}, weekly: {}, streakCount: await sGet('streakCount',0), streakLastDate: await sGet('streakLastDate', null) };
+    for (const k of dailyKeys) dump.daily[k] = await sGet(k, null);
+    for (const k of weeklyKeys) dump.weekly[k] = await sGet(k, null);
+    const json = JSON.stringify(dump, null, 2);
+    const box = el.querySelector('#export-box');
+    box.style.display = 'block';
+    box.textContent = json;
+    try {
+      const blob = new Blob([json], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'ledger-export-' + todayISO() + '.json';
+      a.click();
+    } catch(e){ /* download may be unavailable in some hosts; the box above still has the JSON */ }
+    toast('Exported');
+  };
+  el.querySelector('#import-btn').onclick = async function(){
+    try {
+      const data = JSON.parse(el.querySelector('#import-box').value);
+      if (data.workstreams){ state.workstreams = data.workstreams; await sSet('workstreams', state.workstreams); }
+      if (data.daily) for (const k in data.daily) await sSet(k, data.daily[k]);
+      if (data.weekly) for (const k in data.weekly) await sSet(k, data.weekly[k]);
+      if (typeof data.streakCount === 'number') await sSet('streakCount', data.streakCount);
+      if (data.streakLastDate !== undefined) await sSet('streakLastDate', data.streakLastDate);
+      toast('Imported \u2014 reloading');
+      await loadAll();
+      render();
+    } catch(e){ toast('Import failed \u2014 check JSON'); }
+  };
+}
+
+function bindNav(){
+  document.querySelectorAll('[data-nav]').forEach(function(b){
+    b.onclick = function(){ state.view = b.dataset.nav; render(); };
+  });
+}
+
+function renderAuthScreen(mode, errorMsg){
+  const root = document.getElementById('lg-root');
+  const isSignUp = mode === 'signup';
+  root.innerHTML =
+    '<div class="ledger-root"><div class="lg-auth">' +
+    '<h1>The Ledger</h1>' +
+    '<p>' + (isSignUp ? 'Create your account. One time, per device.' : 'Sign in to sync your ledger.') + '</p>' +
+    '<input type="email" id="auth-email" placeholder="Email" autocomplete="username">' +
+    '<input type="password" id="auth-pass" placeholder="Password" autocomplete="' + (isSignUp ? 'new-password' : 'current-password') + '">' +
+    '<div class="lg-auth-err">' + (errorMsg || '') + '</div>' +
+    '<button class="lg-btn block" id="auth-submit">' + (isSignUp ? 'Sign Up' : 'Sign In') + '</button>' +
+    '<div class="lg-auth-toggle" id="auth-toggle">' + (isSignUp ? 'Already have an account? Sign in' : 'New here? Create an account') + '</div>' +
+    '</div></div>';
+
+  document.getElementById('auth-toggle').onclick = function(){ renderAuthScreen(isSignUp ? 'signin' : 'signup'); };
+  document.getElementById('auth-submit').onclick = async function(){
+    const email = document.getElementById('auth-email').value.trim();
+    const pass = document.getElementById('auth-pass').value;
+    if (!email || !pass){ renderAuthScreen(mode, 'Enter both fields.'); return; }
+    try {
+      const data = isSignUp ? await authSignUp(email, pass) : await authSignIn(email, pass);
+      if (!data.access_token){
+        renderAuthScreen('signin', 'Account created. Check email to confirm if required, then sign in.');
+        return;
+      }
+      storeSession({ access_token: data.access_token, refresh_token: data.refresh_token, expires_at: Date.now() + (data.expires_in || 3600) * 1000 });
+      startApp();
+    } catch(e){
+      renderAuthScreen(mode, e.message || 'Something went wrong.');
+    }
+  };
+}
+
+async function startApp(){
+  const root = document.getElementById('lg-root');
+  root.innerHTML = '<div class="ledger-root"><div class="lg-loading">Opening the ledger...</div></div>';
+  state.accessToken = await getValidAccessToken();
+  try {
+    await Promise.race([
+      loadAll(),
+      new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('boot timeout')); }, 12000); })
+    ]);
+  } catch(e){
+    console.warn('Boot stalled, proceeding with whatever loaded', e);
+    if (!state.workstreams || !state.workstreams.length) state.workstreams = defaultWorkstreams();
+    const iso = todayISO();
+    if (!state.daily[iso]) state.daily[iso] = emptyDaily(iso);
+    const satIso = saturdayOfWeek(iso);
+    if (!state.weekly[satIso]) state.weekly[satIso] = { date: satIso, winsLosses: '', completed: false };
+  }
+  await refreshStreak();
+  render();
+}
+
+(async function boot(){
+  if (!supabaseConfigured()){ startApp(); return; }
+  const token = await getValidAccessToken();
+  if (!token){ renderAuthScreen('signin'); return; }
+  state.accessToken = token;
+  startApp();
+})();
+
+})();
+</script>
