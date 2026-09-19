@@ -974,6 +974,7 @@
       drawRoutePreviews();
       buildLineupPanel();
       if (typeof buildDefenseLineupPanel === 'function') buildDefenseLineupPanel();
+      buildTapControls(); // refresh which play button is highlighted + Send Play/Sent state — see 2026-09-19 fix note above setPlay()
       render();
     } finally {
       applyingRemoteState = false;
@@ -5609,6 +5610,13 @@
 
   function setPlay(key){
     currentPlay = key;
+    // Keep this in step with currentPlay no matter how setPlay() got
+    // called (a tap, a remote sync update, whatever) — it's what the Tap
+    // to Assign designed-play row highlights as active. Previously only
+    // updated from the row's own click handler, so a play arriving via
+    // sync would load correctly but leave the wrong button highlighted
+    // until the coach tapped something themselves (2026-09-19 fix).
+    if (TAP_DESIGNED_PLAYS.indexOf(key) !== -1) tapDesignedPlay = key;
     t = 0; playing = false;
     document.getElementById('playBtn').textContent = '▶';
     const builderDetails = document.getElementById('builderDetails');
