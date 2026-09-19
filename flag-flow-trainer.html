@@ -430,6 +430,13 @@
   .formation-btn.active, .subtoggle-btn.active{ background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold); }
   .tap-clear-btn{ display:block; margin-top:10px; border-color:var(--off-red); color:var(--off-red); }
   .tap-clear-btn:hover{ border-color:var(--off-red); color:#fff; background:rgba(226,84,74,0.15); }
+  .tap-send-btn{
+    display:block; margin-top:6px;
+    background:var(--flag-gold); color:#2a1d05; border-color:var(--flag-gold);
+    font-weight:700;
+  }
+  .tap-send-btn:hover{ filter:brightness(1.08); }
+  .tap-sent-hint{ margin-top:6px; opacity:0.75; }
   .sync-indicator{ display:none; align-items:center; gap:5px; font-size:0.68rem; color:var(--chalk-dim); }
   .sync-indicator .dot{ width:7px; height:7px; border-radius:50%; background:var(--chalk-dim); }
   .sync-indicator.sync-on .dot{ background:var(--carrier-green); }
@@ -855,8 +862,8 @@
   // Same defensive pattern as flag-flow-team-sync.html throughout: a
   // dynamic import inside try/catch, so no signal or unconfigured
   // credentials just mean "behaves like solo mode," never a broken page.
-  const SUPABASE_URL = "https://imfwbikmumyitfmqbcxj.supabase.co";
-  const SUPABASE_ANON_KEY = "sb_publishable_7fifS7gsBSwcY6oS9ZDVgg_NfS7qTv0";
+  const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL_HERE";
+  const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
   // Shared secret both coaches' copies of this file must agree on — same
   // trust model as Team Sync's team code. Change it if you want, just
   // keep every deployed copy of this file in sync.
@@ -872,6 +879,17 @@
   let sb = null;
   let applyingRemoteState = false;
   let lastSyncSignature = null;
+  // What's actually been pushed and is showing on the other device — kept
+  // separate from currentPlay/flippedPlays so a coach can browse/build the
+  // NEXT play locally (e.g. while the current one's still being run on the
+  // field) without that half-finished prep flashing onto the other phone.
+  // Only sendCurrentPlay() (the "Send Play" button) advances these; live
+  // assignment/roster edits still push immediately, but always tagged with
+  // whichever play was last actually sent, not whatever's on screen this
+  // instant. Seeded for real in initSync(), once currentPlay/flippedPlays
+  // exist.
+  let syncedPlay = null;
+  let syncedFlipped = false;
 
   function updateSyncIndicator(ok){
     const el = document.getElementById('syncIndicator');
@@ -891,14 +909,32 @@
   // list of names Edit Roster manages) rides in this same row too, added
   // 2026-09-09 — same last-write-wins model, so whoever last hit "Save
   // roster" is the one both devices end up showing.
+  //
+  // current_play/flipped come from syncedPlay/syncedFlipped, NOT live
+  // currentPlay/flippedPlays — added 2026-09-19 so a coach can prep the
+  // next play locally (kids are still lining up for the current one)
+  // without it appearing on the other phone until they explicitly hit
+  // "Send Play." Assignments/roster are deliberately still live/immediate
+  // per Russell's call — only which play is "current" waits.
   function currentSessionSnapshot(){
     return {
-      current_play: currentPlay,
-      flipped: !!flippedPlays[currentPlay],
+      current_play: syncedPlay,
+      flipped: !!syncedFlipped,
       assignments: Object.assign({}, ASSIGNMENTS),
       def_assignments: Object.assign({}, DEF_ASSIGNMENTS),
       roster: ROSTER.slice(),
     };
+  }
+
+  // Explicit "Send Play" action — promotes whatever's currently loaded
+  // locally (play + flip state) to the shared/synced value and pushes
+  // immediately. This is the only thing that changes syncedPlay/
+  // syncedFlipped outside of accepting a remote update.
+  function sendCurrentPlay(){
+    syncedPlay = currentPlay;
+    syncedFlipped = !!flippedPlays[currentPlay];
+    logEvent('play_send', {play: syncedPlay, flipped: syncedFlipped});
+    pushSessionState();
   }
 
   function pushSessionState(){
@@ -918,6 +954,11 @@
     try{
       if (row.current_play && row.current_play !== currentPlay) setPlay(row.current_play);
       if (!!flippedPlays[currentPlay] !== !!row.flipped) flipDesignedPlay();
+      // Whatever we just accepted IS the synced state now, whether or not
+      // it actually differed from what was already loaded locally — keeps
+      // this device's own next live assignment/roster push correctly
+      // tagged with the right play instead of a stale one.
+      if (row.current_play){ syncedPlay = row.current_play; syncedFlipped = !!row.flipped; }
       if (row.assignments){
         Object.keys(ASSIGNMENTS).forEach(k=> delete ASSIGNMENTS[k]);
         Object.assign(ASSIGNMENTS, row.assignments);
@@ -959,6 +1000,8 @@
 
   async function initSync(){
     if (!SYNC_ACTIVE) return;
+    syncedPlay = currentPlay;
+    syncedFlipped = !!flippedPlays[currentPlay];
     let createClient;
     try{
       ({ createClient } = await import('https://esm.sh/@supabase/supabase-js@2'));
@@ -5590,7 +5633,9 @@
     buildLineupPanel();
     updateGlobalFlipVisibility();
     render();
-    pushSessionState();
+    // No pushSessionState() here on purpose (as of 2026-09-19) — picking a
+    // play is just local browsing/prep now. sendCurrentPlay() (the "Send
+    // Play" button) is what actually shares it with the other device.
   }
 
   function setDefense(key){
@@ -5884,7 +5929,8 @@
     buildTapControls();
     buildLineupPanel();
     render();
-    pushSessionState();
+    // No pushSessionState() here either, same reasoning as setPlay() above
+    // — flipping is part of local prep now, shared via Send Play.
   }
 
   document.getElementById('globalFlipBtn').onclick = ()=>{
@@ -6001,6 +6047,31 @@
       hint.className = 'tap-hint';
       hint.textContent = 'Pick a play above to load it.';
       panel.appendChild(hint);
+
+      // "Send Play" — added 2026-09-19. Browsing/flipping plays above no
+      // longer pushes to the other device on its own (see setPlay/
+      // flipDesignedPlay) — this is the one explicit action that does,
+      // so a coach can prep the next play locally (kids still lining up
+      // for the current one) without it appearing on the other phone
+      // until they're actually ready.
+      if (SYNC_ACTIVE && sb){
+        const pending = currentPlay !== syncedPlay || !!flippedPlays[currentPlay] !== !!syncedFlipped;
+        if (pending){
+          const sendBtn = document.createElement('button');
+          sendBtn.className = 'subtoggle-btn tap-send-btn';
+          sendBtn.textContent = 'Send Play';
+          sendBtn.onclick = ()=>{
+            sendCurrentPlay();
+            buildTapControls();
+          };
+          panel.appendChild(sendBtn);
+        } else {
+          const sentHint = document.createElement('div');
+          sentHint.className = 'tap-hint tap-sent-hint';
+          sentHint.textContent = 'Sent — this is what the other device shows.';
+          panel.appendChild(sentHint);
+        }
+      }
     }
     if (currentMode === 'defense'){
       if (TAP_DEFENSIVE_PLAYS.length){
