@@ -1,0 +1,9 @@
+{
+  "name": "fraud-case-agent-prototype",
+  "version": "1.0.0",
+  "description": "Single-agent, two-tool fraud case investigation prototype",
+  "main": "agent.js",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0"
+  }
+}

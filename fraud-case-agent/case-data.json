@@ -1,0 +1,30 @@
+{
+  "C-1001": {
+    "summary": "New deposit account opened 2 days ago. Device used has 4 prior applications in the last 48 hours under different names. No prior account history.",
+    "velocity_flag": true,
+    "device_reuse_count": 4
+  },
+  "C-1002": {
+    "summary": "New deposit account. SSN issuance date is inconsistent with applicant's stated age (SSN issued 2019, applicant claims age 45). Employer listed does not appear in standard industry databases.",
+    "velocity_flag": false,
+    "device_reuse_count": 0
+  },
+  "C-1003": {
+    "summary": "New deposit account opened 3 weeks ago. Normal transaction pattern, single device, consistent identity details. Flagged only for routine review.",
+    "velocity_flag": false,
+    "device_reuse_count": 0
+  },
+  "C-1004": {
+    "summary": "New deposit account. Device has 2 prior applications in past week. Applicant's stated income and employer are also inconsistent with reported industry.",
+    "velocity_flag": true,
+    "device_reuse_count": 2
+  },
+  "IDENTITY_DETAILS": {
+    "C-1002": {
+      "ssn_issuance_year": 2019,
+      "stated_age": 45,
+      "employer_verified": false,
+      "address_history_months": 2
+    }
+  }
+}
