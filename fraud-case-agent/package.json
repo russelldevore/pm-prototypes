@@ -4,6 +4,7 @@
   "description": "Single-agent, two-tool fraud case investigation prototype",
   "main": "agent.js",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.0"
+    "@anthropic-ai/sdk": "^0.32.0",
+    "@modelcontextprotocol/sdk": "^1.17.0"
   }
 }
