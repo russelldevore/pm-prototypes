@@ -1,0 +1,507 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Sole Check v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one narrow column like a gear tag; form card, then verdict, packet, report. Blaze orange used only for primary actions. */
+:root{
+  --bg:#ECEFEA; --surface:#F8FAF6; --ink:#1B231F; --muted:#56635B; --line:#C9D1C9;
+  --blaze:#C2410C; --blaze-ink:#FFFFFF;
+  --defect:#B42318; --defect-bg:#FDECEA; --unclear:#9A6700; --unclear-bg:#FFF4D6; --wear:#2F6F3E; --wear-bg:#E5F2E7;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#131915; --surface:#1B231E; --ink:#E6ECE7; --muted:#9AA89F; --line:#33413A;
+  --blaze:#F07A3E; --blaze-ink:#1A0E06;
+  --defect:#F2867B; --defect-bg:#3A1A17; --unclear:#E8B94A; --unclear-bg:#33290F; --wear:#7CC48D; --wear-bg:#163020; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#131915; --surface:#1B231E; --ink:#E6ECE7; --muted:#9AA89F; --line:#33413A;
+  --blaze:#F07A3E; --blaze-ink:#1A0E06;
+  --defect:#F2867B; --defect-bg:#3A1A17; --unclear:#E8B94A; --unclear-bg:#33290F; --wear:#7CC48D; --wear-bg:#163020; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5}
+.wrap{max-width:720px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-direction:column;gap:6px}
+.tag{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tag b{background:var(--ink);color:var(--bg);padding:2px 6px;border-radius:3px;font-weight:500}
+h1{font-family:var(--display);font-size:clamp(40px,9vw,56px);line-height:1;margin:0;letter-spacing:.01em;text-wrap:balance}
+h2{font-family:var(--display);font-size:26px;line-height:1.1;margin:0;letter-spacing:.02em}
+.lede{margin:0;color:var(--muted);max-width:60ch}
+section{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:20px;display:flex;flex-direction:column;gap:16px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+label,.lbl{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px;min-width:0;width:100%;text-transform:none;letter-spacing:0;font-weight:400}
+textarea{font-family:var(--mono);font-size:13px;line-height:1.5;min-height:220px;resize:vertical}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--blaze);outline-offset:2px}
+.km{display:flex;gap:8px}.km input{flex:1}.km select{width:auto}
+fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
+legend{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;padding:0}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.mode{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:4px;padding:10px;cursor:pointer;background:var(--bg);text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink);font-size:15px;flex-direction:row}
+.mode input{width:auto;margin-top:4px}
+.mode small{display:block;color:var(--muted);font-size:13px}
+.mode:has(input:checked){border-color:var(--blaze);box-shadow:inset 0 0 0 1px var(--blaze)}
+.checks{display:flex;flex-direction:column;gap:8px}
+.check{flex-direction:row;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-weight:400;font-size:15px;color:var(--ink)}
+.check input{width:auto}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+button{font:inherit;font-weight:700;border-radius:4px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+button.primary{background:var(--blaze);border-color:var(--blaze);color:var(--blaze-ink)}
+button.link{border:0;background:none;padding:6px 4px;text-decoration:underline;color:var(--muted);font-weight:600}
+.examples{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px;color:var(--muted)}
+.verdict{border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:6px;border:1px solid}
+.verdict.defect{background:var(--defect-bg);border-color:var(--defect);color:var(--ink)}
+.verdict.unclear{background:var(--unclear-bg);border-color:var(--unclear)}
+.verdict.wear{background:var(--wear-bg);border-color:var(--wear)}
+.pill{align-self:flex-start;font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:3px;color:var(--bg)}
+.defect .pill{background:var(--defect)}.unclear .pill{background:var(--unclear)}.wear .pill{background:var(--wear)}
+.verdict h3{font-family:var(--display);font-size:32px;line-height:1.05;margin:0}
+.verdict p{margin:0}
+ul.reasons{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+ul.reasons li{display:grid;grid-template-columns:28px 1fr;gap:8px;align-items:baseline}
+.sign{font-family:var(--mono);font-size:13px;text-align:center;border-radius:3px;padding:1px 0}
+.sign.up{background:var(--defect-bg);color:var(--defect)}.sign.down{background:var(--wear-bg);color:var(--wear)}.sign.info{background:var(--bg);color:var(--muted)}
+ol.steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.note{font-size:14px;color:var(--muted);margin:0}
+.dispute{border-top:1px dashed var(--line);padding-top:12px;display:flex;flex-direction:column;gap:8px}
+.packet-list{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px}
+pre{font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:12px;overflow-x:auto;margin:0;max-height:260px}
+.status{font-size:14px;color:var(--wear);font-weight:600;min-height:1.5em}
+.count{font-family:var(--mono);font-variant-numeric:tabular-nums}
+footer{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:8px}
+footer h4{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+footer ul{margin:0;padding-left:18px}
+@media (prefers-reduced-motion:no-preference){#result{scroll-margin-top:12px}}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="tag"><b>v2</b> prototype · triage + failure log</span>
+  <h1>Sole Check</h1>
+  <p class="lede">Your trail shoes came apart early. Is it a defect you can claim, or normal wear? Answer a few questions, get a read with the reasons behind it, a ready-to-send claim, and a failure report you keep.</p>
+</header>
+
+<section aria-labelledby="h-shoe">
+  <h2 id="h-shoe">1 · Your shoe</h2>
+  <div class="examples">Try an example:
+    <button type="button" class="link" data-example="op">Peregrine 13, peeled at 20 km</button>
+    <button type="button" class="link" data-example="wear">Lugs gone at 500 km</button>
+    <button type="button" class="link" data-example="heel">Heels worn through at 200 km</button>
+  </div>
+  <div class="row">
+    <label for="brand">Brand
+      <select id="brand">
+      </select>
+    </label>
+    <label for="model">Model<select id="model"></select></label>
+    <label for="modelOther" id="modelOtherWrap" hidden>Model name<input id="modelOther" placeholder="Type the model name"></label>
+  </div>
+  <div class="row">
+    <label for="version">Version<select id="version"></select></label>
+    <label for="variant">Variant
+      <select id="variant"><option value="standard">Standard</option><option value="gtx">Waterproof (GTX)</option><option value="wide">Wide</option><option value="soft">Soft-ground (ST)</option><option value="other">Other</option></select>
+    </label>
+  </div>
+  <div class="row">
+    <label for="dist">Distance when it failed
+      <span class="km"><input id="dist" type="number" min="0" inputmode="decimal" placeholder="e.g. 120"><select id="unit" aria-label="Unit"><option value="km">km</option><option value="mi">mi</option></select></span>
+    </label>
+    <label for="months">Months since purchase<input id="months" type="number" min="0" inputmode="numeric" placeholder="e.g. 3"></label>
+    <label for="channel">Where you bought them
+      <select id="channel">
+        <option value="brand">Brand website or store</option>
+        <option value="retailer">Running shop or retailer</option>
+        <option value="oldstock">Clearance / previous-season stock</option>
+        <option value="used">Second-hand</option>
+      </select>
+    </label>
+  </div>
+</section>
+
+<section aria-labelledby="h-fail">
+  <h2 id="h-fail">2 · What failed</h2>
+  <fieldset>
+    <legend>Failure</legend>
+    <div class="modes">
+      <label class="mode"><input type="radio" name="mode" value="delam"><span>Outsole separating<small>Rubber peeling away from the foam at the glue line</small></span></label>
+      <label class="mode"><input type="radio" name="mode" value="foam"><span>Foam split or torn<small>Exposed midsole foam cracking or ripping</small></span></label>
+      <label class="mode"><input type="radio" name="mode" value="lugs"><span>Lugs or rubber worn down<small>Tread worn smooth or through to the foam</small></span></label>
+      <label class="mode"><input type="radio" name="mode" value="upper"><span>Upper torn<small>Hole or rip in the mesh</small></span></label>
+      <label class="mode"><input type="radio" name="mode" value="seam"><span>Seam, eyelet or heel counter<small>Stitching, lace loops or heel structure failing</small></span></label>
+      <label class="mode"><input type="radio" name="mode" value="midsole"><span>Cushion feels dead<small>Midsole flat or lost its bounce</small></span></label>
+    </div>
+  </fieldset>
+  <div class="row">
+    <label for="where">Where on the shoe
+      <select id="where"><option value="forefoot">Forefoot</option><option value="heel">Heel</option><option value="midfoot">Midfoot</option><option value="toe">Toe</option><option value="side">Side / upper</option></select>
+    </label>
+    <label for="shoes">Which shoes
+      <select id="shoes"><option value="one">One shoe</option><option value="both">Both shoes</option></select>
+    </label>
+    <label for="terrain">Usual terrain
+      <select id="terrain">
+        <option value="smooth">Smooth dirt trail</option>
+        <option value="rocky">Rocky, technical</option>
+        <option value="mixed">Mix of trail and road</option>
+        <option value="road">Mostly road or pavement</option>
+      </select>
+    </label>
+  </div>
+  <div class="checks">
+    <label class="check" for="snag"><input type="checkbox" id="snag">It happened from a snag, rock strike or fall</label>
+    <label class="check" for="repaired"><input type="checkbox" id="repaired">I already glued or repaired it</label>
+    <label class="check" for="repeat"><input type="checkbox" id="repeat">A replacement pair failed the same way</label>
+  </div>
+  <div class="actions">
+    <button type="button" class="primary" id="run">Check my shoe</button>
+    <span class="note" id="formmsg" role="status"></span>
+  </div>
+</section>
+
+<section id="result" aria-live="polite" hidden>
+  <h2>3 · The read</h2>
+  <div id="verdict" class="verdict"></div>
+  <div>
+    <p class="lbl" style="margin:0 0 8px">Why</p>
+    <ul class="reasons" id="reasons"></ul>
+  </div>
+  <div>
+    <p class="lbl" style="margin:0 0 8px">What to do</p>
+    <ol class="steps" id="steps"></ol>
+  </div>
+  <p class="note">This is a guide, not a ruling. Only the brand decides a warranty claim, after it inspects the shoes.</p>
+  <div class="dispute">
+    <p class="lbl" style="margin:0">Does this read look right?</p>
+    <div class="actions">
+      <button type="button" data-dispute="agree">Looks right</button>
+      <button type="button" data-dispute="defect">I think it's a defect</button>
+      <button type="button" data-dispute="wear">I think it's wear</button>
+    </div>
+    <p class="status" id="disputemsg" role="status"></p>
+  </div>
+</section>
+
+<section id="packet" hidden>
+  <h2>4 · Claim packet</h2>
+  <p class="note" id="window"></p>
+  <div>
+    <p class="lbl" style="margin:0 0 8px">Gather before you file</p>
+    <ul class="packet-list">
+      <li>Proof of purchase (receipt or order email)</li>
+      <li>Photos of both shoes: each side, the top, and the full outsole</li>
+      <li>A close-up of the failure with something for scale</li>
+      <li>The size and production label inside the tongue. It often shows when the shoe was made, which matters for old stock.</li>
+    </ul>
+  </div>
+  <label for="claim">Claim message (edit before sending)<textarea id="claim"></textarea></label>
+  <div class="actions"><button type="button" id="copyclaim">Copy message</button><span class="status" id="claimmsg" role="status"></span></div>
+</section>
+
+<section id="report" hidden>
+  <h2>5 · Failure report</h2>
+  <p class="note">Each saved report records what failed, when and where. No name or contact details. In v1 it stays on this device. Pooled across runners, these reports show which versions fail early and how.</p>
+  <p class="note">Reports from the examples above are tagged <code>"source": "example"</code> so they can be filtered out. Change any answer and the report counts as yours.</p>
+  <pre id="reportjson"></pre>
+  <div class="actions">
+    <button type="button" class="primary" id="save">Save report</button>
+    <button type="button" id="copyjson">Copy all as JSON</button>
+    <button type="button" id="copycsv">Copy all as CSV</button>
+    <span class="note">Saved on this device: <span class="count" id="count">0</span></span>
+  </div>
+  <p class="status" id="reportmsg" role="status"></p>
+</section>
+
+<footer>
+  <h4>How v1 decides</h4>
+  <p style="margin:0">Fixed rules, no AI model in the loop yet. Each failure type has an "early" distance: outsole separation 400 km, foam split 300 km, worn lugs 250 km, upper tear 300 km, seam or eyelet 400 km, dead cushion 250 km. Failing well before that points toward a defect; well after points toward wear. Snags, road use and abrasive terrain push toward wear. A replacement pair failing the same way pushes toward defect. These thresholds are our starting assumptions from one r/trailrunning thread and retailer reviews. They have not been validated.</p>
+  <h4>Changelog</h4>
+  <ul><li>v2 · Brand list grown to 23. Model and version are pick lists so reports group cleanly; "Other" is still allowed and is flagged. Save and copy now always capture the shoe on screen. Example data is tagged so it never mixes with real reports. Each report carries a shoe key for grouping.</li><li>v1 · Triage, claim packet, on-device failure report, verdict feedback.</li></ul>
+</footer>
+</div>
+
+<script>
+(function(){
+  var VERSION = "v2";
+  var MODELS = {
+    "Saucony":["Peregrine","Xodus Ultra","Endorphin Edge","Ride TR"],
+    "Hoka":["Speedgoat","Challenger","Mafate Speed","Stinson","Tecton X","Zinal"],
+    "Altra":["Lone Peak","Olympus","Timp","Mont Blanc","Experience Wild"],
+    "Salomon":["Speedcross","Sense Ride","Genesis","S/Lab Ultra","Ultra Glide","Thundercross"],
+    "La Sportiva":["Bushido","Prodigio","Jackal","Akasha","Mutant","Cyklon"],
+    "Brooks":["Cascadia","Catamount","Caldera","Divide"],
+    "Topo Athletic":["Ultraventure","Terraventure","MTN Racer"],
+    "Nike":["Pegasus Trail","Zegama","Wildhorse","Kiger","Ultrafly"],
+    "Merrell":["MTL Long Sky","Agility Peak"],
+    "Inov-8":["Trailfly","Mudtalon","Roclite","Trailtalon"],
+    "Scarpa":["Spin Ultra","Ribelle Run","Golden Gate"],
+    "The North Face":["Vectiv Enduris","Vectiv Infinite"],
+    "Adidas Terrex":["Agravic","Speed Ultra"],
+    "New Balance":["Fresh Foam Hierro","Fresh Foam More Trail"],
+    "On":["Cloudultra","Cloudvista","Cloudventure"],
+    "Asics":["Trabuco","Fuji Lite"],
+    "Mizuno":["Wave Daichi","Wave Mujin"],
+    "Nnormal":["Kjerag","Tomir"],
+    "Norda":["001","002"],
+    "Arc'teryx":["Norvan"],
+    "Dynafit":["Ultra 100","Feline"],
+    "VJ":["Ultra","Spark"],
+    "Other brand":[]
+  };
+  var fromExample = false;
+  var saved = [];
+  var KEY = "solecheck.reports.v1";
+  var THRESH = {delam:400, foam:300, lugs:250, upper:300, seam:400, midsole:250};
+  var MODE_LABEL = {delam:"outsole separating from the midsole", foam:"midsole foam splitting", lugs:"tread worn down", upper:"upper tearing", seam:"seam / eyelet / heel counter failing", midsole:"cushioning going flat"};
+  var TERRAIN_LABEL = {smooth:"smooth dirt trail", rocky:"rocky, technical trail", mixed:"a mix of trail and road", road:"mostly road"};
+  var CHANNEL_LABEL = {brand:"the brand directly", retailer:"a retailer", oldstock:"clearance / previous-season stock", used:"second-hand"};
+  var WINDOW = {"Saucony":12};
+  var $ = function(id){return document.getElementById(id);};
+  var current = null;
+
+  function store(){ try{ return JSON.parse(localStorage.getItem(KEY)||"[]"); }catch(e){ return []; } }
+  function persist(list){ try{ localStorage.setItem(KEY, JSON.stringify(list)); return true; }catch(e){ return false; } }
+  function refreshCount(){ $("count").textContent = allReports().filter(function(r){ return saved.concat(store()).some(function(x){ return x.report_id === r.report_id; }); }).length; }
+
+  function fillBrands(){
+    var b = $("brand"); b.innerHTML = "";
+    Object.keys(MODELS).forEach(function(k){ var o=document.createElement("option"); o.value=k; o.textContent=k; b.appendChild(o); });
+    var v = $("version"); v.innerHTML = '<option value="">Not sure</option>';
+    for (var i=1;i<=20;i++){ var o=document.createElement("option"); o.value=String(i); o.textContent=String(i); v.appendChild(o); }
+  }
+  function fillModels(){
+    var list = MODELS[$("brand").value] || [], m = $("model");
+    m.innerHTML = "";
+    list.forEach(function(x){ var o=document.createElement("option"); o.value=x; o.textContent=x; m.appendChild(o); });
+    var o = document.createElement("option"); o.value="__other"; o.textContent = list.length ? "Not listed (type it)" : "Type brand and model"; m.appendChild(o);
+    toggleOther();
+  }
+  function toggleOther(){
+    var other = $("model").value === "__other";
+    $("modelOtherWrap").hidden = !other;
+    $("modelOtherWrap").firstChild.textContent = $("brand").value === "Other brand" ? "Brand and model" : "Model name";
+  }
+
+  function read(){
+    var m = document.querySelector('input[name="mode"]:checked');
+    var d = parseFloat($("dist").value);
+    var km = isNaN(d) ? null : ($("unit").value === "mi" ? Math.round(d*1.609) : Math.round(d));
+    var mo = parseInt($("months").value,10);
+    return {
+      brand:$("brand").value,
+      model: $("model").value === "__other" ? $("modelOther").value.trim() : $("model").value,
+      model_listed: $("model").value !== "__other",
+      version:$("version").value, variant:$("variant").value,
+      km:km, months:isNaN(mo)?null:mo, channel:$("channel").value,
+      mode:m?m.value:null, where:$("where").value, shoes:$("shoes").value, terrain:$("terrain").value,
+      snag:$("snag").checked, repaired:$("repaired").checked, repeat:$("repeat").checked
+    };
+  }
+
+  function assess(f){
+    var score = 0, reasons = [], missing = 0;
+    var t = THRESH[f.mode];
+    if (f.km === null){ missing++; reasons.push(["info","No distance given, so the read leans on the other answers."]); }
+    else {
+      var r = f.km / t;
+      if (r < 0.5){ score += 3; reasons.push(["up","Failed at "+f.km+" km, well under half the ~"+t+" km we treat as early for this failure."]); }
+      else if (r < 1){ score += 2; reasons.push(["up","Failed at "+f.km+" km, before the ~"+t+" km we treat as early for this failure."]); }
+      else if (r < 1.5){ reasons.push(["info","Failed at "+f.km+" km, near the ~"+t+" km line. Could go either way."]); }
+      else { score -= 3; reasons.push(["down","Failed at "+f.km+" km, well past the ~"+t+" km we treat as early."]); }
+    }
+    if (f.mode === "delam" || f.mode === "seam"){ score += 1; reasons.push(["up","Glue-line and stitching failures are construction problems, the kind warranties usually cover."]); }
+    if (f.mode === "lugs" || f.mode === "midsole"){ score -= 1; reasons.push(["down","Worn tread and flat cushioning are how shoes normally age."]); }
+    if (f.snag){ score -= 3; reasons.push(["down","Damage from a snag, rock strike or fall usually counts as an accident, not a defect."]); }
+    if (f.mode === "lugs" && (f.terrain === "road" || f.terrain === "mixed")){ score -= 2; reasons.push(["down","Pavement grinds trail lugs down fast."]); }
+    if (f.mode === "lugs" && f.terrain === "rocky"){ score -= 1; reasons.push(["down","Abrasive rock wears rubber faster than dirt."]); }
+    if (f.repeat){ score += 1; reasons.push(["up","A replacement failed the same way, which points to the design or a batch rather than how you run."]); }
+    if (f.channel === "oldstock"){ reasons.push(["info","Bought as older stock. Some runners suspect aging glue in shoes that sat in storage. Unproven, but worth mentioning in your claim."]); }
+    if (f.channel === "used"){ score -= 1; reasons.push(["down","Second-hand pairs are usually outside warranty and their history is unknown."]); }
+    if (f.repaired){ reasons.push(["info","You've already glued it. Say so in the claim. Some brands may treat a repaired shoe as modified."]); }
+    var win = WINDOW[f.brand];
+    if (win && f.months !== null && f.months > win){ reasons.push(["info","Bought "+f.months+" months ago, past "+f.brand+"'s "+win+"-month warranty."]); }
+    if (f.months === null) missing++;
+    var verdict = score >= 3 ? "defect" : score >= 1 ? "unclear" : "wear";
+    var confidence = missing >= 2 ? "Low" : (Math.abs(score) >= 4 && missing === 0) ? "Higher" : "Moderate";
+    return {score:score, verdict:verdict, confidence:confidence, reasons:reasons};
+  }
+
+  var COPY = {
+    defect:{pill:"Likely defect", head:"This looks like a defect.", body:"It failed early, in a way that points to how the shoe was built rather than how it was used."},
+    unclear:{pill:"Unclear", head:"Could be either. File anyway.", body:"The signals are mixed. A claim costs you only a few minutes, and the brand makes the call."},
+    wear:{pill:"Likely wear", head:"This looks like normal wear.", body:"The distance and the type of damage fit how trail shoes age. A claim is unlikely to succeed."}
+  };
+
+  function stepsFor(v, f){
+    var s = [];
+    if (v === "wear"){
+      s.push("Retire or repurpose the pair. Worn tread loses grip, especially on wet rock.");
+      s.push("Save the report below so your next pair has a baseline to compare against.");
+      s.push("If you still think it's a defect, tap \"I think it's a defect\" and file the claim anyway. The packet is ready.");
+    } else {
+      s.push("Stop running in them so the damage doesn't grow and muddy the evidence.");
+      s.push("Take the photos listed in the claim packet below.");
+      s.push(f.channel === "retailer" ? "Contact the shop you bought from first. Many brands send retailer purchases back to the retailer." : "Send the claim message to the brand's warranty or support form.");
+      s.push("Save the failure report so the outcome can be added later.");
+    }
+    return s;
+  }
+
+  function claimText(f, a){
+    var name = [f.brand === "Other brand" ? "" : f.brand, f.model, f.version, f.variant !== "standard" ? "(" + $("variant").selectedOptions[0].textContent + ")" : ""].filter(Boolean).join(" ");
+    var lines = [];
+    lines.push("Subject: Warranty claim: " + name + ", " + MODE_LABEL[f.mode] + (f.km!==null ? " after " + f.km + " km" : ""));
+    lines.push("");
+    lines.push("Hello " + f.brand + " support,");
+    lines.push("");
+    lines.push("I'd like to request a warranty review for my " + name + ". I noticed the " + MODE_LABEL[f.mode] + " at the " + f.where + (f.km!==null ? " after about " + f.km + " km" : "") + (f.months!==null ? ", " + f.months + " month" + (f.months===1?"":"s") + " after purchase" : "") + ". It affects " + (f.shoes==="both"?"both shoes":"one shoe") + ". I run mostly on " + TERRAIN_LABEL[f.terrain] + ".");
+    var extra = [];
+    if (f.channel) extra.push("I bought them from " + CHANNEL_LABEL[f.channel] + ".");
+    if (f.repeat) extra.push("A replacement pair failed the same way.");
+    if (f.repaired) extra.push("I applied adhesive as a temporary fix.");
+    if (f.snag) extra.push("The damage followed a snag or impact on the trail.");
+    if (extra.length){ lines.push(""); lines.push(extra.join(" ")); }
+    lines.push("");
+    lines.push("Attached: proof of purchase, photos of both shoes (sides, top and outsole), a close-up of the failure, and the size/production label inside the tongue.");
+    lines.push("");
+    lines.push("Could you let me know the next steps?");
+    lines.push("");
+    lines.push("Thanks,");
+    lines.push("[Your name]");
+    return lines.join("\n");
+  }
+
+  function makeReport(f, a){
+    return {
+      report_id: "sc-" + Date.now().toString(36),
+      created_at: new Date().toISOString(),
+      app_version: VERSION,
+      source: fromExample ? "example" : "user",
+      shoe_key: [f.brand, f.model || "unknown", f.version || "unknown", f.variant].join("|").toLowerCase(),
+      brand: f.brand, model: f.model || null, model_listed: f.model_listed, version: f.version || null, variant: f.variant,
+      km_at_failure: f.km, months_since_purchase: f.months, purchase_channel: f.channel,
+      failure_mode: f.mode, location: f.where, shoes_affected: f.shoes, terrain: f.terrain,
+      snag_or_impact: f.snag, repaired: f.repaired, replacement_also_failed: f.repeat,
+      tool_verdict: a.verdict, tool_score: a.score, tool_confidence: a.confidence,
+      user_verdict: null, claim_outcome: null
+    };
+  }
+
+  function render(quiet){
+    quiet = quiet === true;
+    var f = read();
+    if (!f.mode){ $("formmsg").textContent = "Pick what failed to get a read."; return; }
+    $("formmsg").textContent = "";
+    var a = assess(f), c = COPY[a.verdict];
+    var v = $("verdict");
+    v.className = "verdict " + a.verdict;
+    v.innerHTML = '<span class="pill"></span><h3></h3><p></p><p class="note"></p>';
+    v.querySelector(".pill").textContent = c.pill;
+    v.querySelector("h3").textContent = c.head;
+    v.querySelector("p").textContent = c.body;
+    v.querySelector(".note").textContent = "Confidence: " + a.confidence + " · score " + (a.score>0?"+":"") + a.score + " (≥3 defect, 1–2 unclear, ≤0 wear)";
+    var ul = $("reasons"); ul.innerHTML = "";
+    a.reasons.forEach(function(r){
+      var li = document.createElement("li");
+      var s = document.createElement("span"); s.className = "sign " + r[0]; s.textContent = r[0]==="up"?"+":r[0]==="down"?"−":"i";
+      s.setAttribute("aria-label", r[0]==="up"?"Points to defect":r[0]==="down"?"Points to wear":"Note");
+      var t = document.createElement("span"); t.textContent = r[1];
+      li.appendChild(s); li.appendChild(t); ul.appendChild(li);
+    });
+    var ol = $("steps"); ol.innerHTML = "";
+    stepsFor(a.verdict, f).forEach(function(x){ var li=document.createElement("li"); li.textContent=x; ol.appendChild(li); });
+    var win = WINDOW[f.brand];
+    $("window").textContent = win ? f.brand + "'s limited warranty covers material and manufacturing defects for " + win + " months from purchase, after the brand inspects the shoes." : "Check " + f.brand + "'s warranty page for its time window and how it handles retailer purchases.";
+    $("claim").value = claimText(f, a);
+    current = makeReport(f, a);
+    $("reportjson").textContent = JSON.stringify(current, null, 2);
+    $("disputemsg").textContent = ""; $("claimmsg").textContent = ""; $("reportmsg").textContent = "";
+    ["result","packet","report"].forEach(function(id){ $(id).hidden = false; });
+    if (!quiet) $("result").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block:"start"});
+  }
+
+  function syncReport(){
+    var f = read(); if (!f.mode) return null;
+    var a = assess(f), prev = current, next = makeReport(f, a);
+    if (prev && prev.tool_verdict === next.tool_verdict && prev.shoe_key === next.shoe_key){ next.report_id = prev.report_id; next.user_verdict = prev.user_verdict; }
+    current = next;
+    $("reportjson").textContent = JSON.stringify(current, null, 2);
+    return current;
+  }
+  function allReports(){
+    var map = {};
+    store().concat(saved).forEach(function(r){ map[r.report_id] = r; });
+    var list = Object.keys(map).map(function(k){ return map[k]; });
+    if (!list.length && current) list = [current];
+    return list;
+  }
+  function copy(text, msgEl, ok){
+    function fallback(){
+      var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand("copy"); msgEl.textContent = ok; }catch(e){ msgEl.textContent = "Couldn't copy. Select the text and copy it yourself."; }
+      document.body.removeChild(ta);
+    }
+    try{ navigator.clipboard.writeText(text).then(function(){ msgEl.textContent = ok; }, fallback); }catch(e){ fallback(); }
+  }
+
+  function toCSV(list){
+    if (!list.length) return "";
+    var cols = []; list.forEach(function(r){ Object.keys(r).forEach(function(k){ if (cols.indexOf(k) < 0) cols.push(k); }); });
+    var esc = function(v){ if (v===null||v===undefined) return ""; v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
+    return [cols.join(",")].concat(list.map(function(r){ return cols.map(function(c){ return esc(r[c]); }).join(","); })).join("\n");
+  }
+
+  var EXAMPLES = {
+    op:{brand:"Saucony",model:"Peregrine",version:"13",variant:"standard",dist:20,unit:"km",months:2,channel:"oldstock",mode:"delam",where:"forefoot",shoes:"one",terrain:"rocky",snag:false,repaired:false,repeat:true},
+    wear:{brand:"Saucony",model:"Peregrine",version:"13",variant:"standard",dist:500,unit:"km",months:8,channel:"retailer",mode:"lugs",where:"forefoot",shoes:"both",terrain:"rocky",snag:false,repaired:false,repeat:false},
+    heel:{brand:"Saucony",model:"Peregrine",version:"14",variant:"standard",dist:200,unit:"km",months:4,channel:"retailer",mode:"lugs",where:"heel",shoes:"both",terrain:"smooth",snag:false,repaired:false,repeat:false}
+  };
+  function load(name, quiet){
+    var e = EXAMPLES[name];
+    $("brand").value = e.brand; fillModels();
+    ["model","version","variant","dist","unit","months","channel","where","shoes","terrain"].forEach(function(k){ $(k).value = e[k]; });
+    toggleOther();
+    ["snag","repaired","repeat"].forEach(function(k){ $(k).checked = e[k]; });
+    var r = document.querySelector('input[name="mode"][value="'+e.mode+'"]'); if (r) r.checked = true;
+    fromExample = true;
+    render(quiet === true);
+  }
+
+  document.querySelectorAll("[data-example]").forEach(function(b){ b.addEventListener("click", function(){ load(b.getAttribute("data-example")); }); });
+  $("run").addEventListener("click", function(){ render(false); });
+  document.querySelectorAll("[data-dispute]").forEach(function(b){
+    b.addEventListener("click", function(){
+      if (!current) return;
+      var d = b.getAttribute("data-dispute");
+      current.user_verdict = d === "agree" ? current.tool_verdict : d;
+      $("reportjson").textContent = JSON.stringify(current, null, 2);
+      $("disputemsg").textContent = d === "agree" ? "Thanks. Recorded on your report." : "Recorded on your report as a disagreement. In the full product, disagreements go to a person for review and help tune the rules.";
+    });
+  });
+  $("copyclaim").addEventListener("click", function(){ copy($("claim").value, $("claimmsg"), "Copied. Paste it into the brand's warranty form or email."); });
+  $("save").addEventListener("click", function(){
+    if (!syncReport()) return;
+    saved = saved.filter(function(r){ return r.report_id !== current.report_id; }).concat([current]);
+    var list = store().filter(function(r){ return r.report_id !== current.report_id; }).concat([current]);
+    var ok = persist(list);
+    $("reportmsg").textContent = (current.source === "example" ? "Saved, tagged as example data. " : "Saved. ") + (ok ? "Kept on this device." : "This browser blocks storage, so it's kept for this visit only. Copy it to keep it.");
+    refreshCount();
+  });
+  $("copyjson").addEventListener("click", function(){ syncReport(); var l = allReports(); copy(JSON.stringify(l, null, 2), $("reportmsg"), "Copied " + l.length + " report" + (l.length===1?"":"s") + " as JSON."); });
+  $("copycsv").addEventListener("click", function(){ syncReport(); var l = allReports(); copy(toCSV(l), $("reportmsg"), "Copied " + l.length + " report" + (l.length===1?"":"s") + " as CSV."); });
+  fillBrands();
+  $("brand").addEventListener("change", fillModels);
+  $("model").addEventListener("change", toggleOther);
+  document.querySelectorAll("#h-shoe, #h-fail").forEach(function(h){
+    var sec = h.parentNode;
+    sec.addEventListener("input", function(){ fromExample = false; });
+    sec.addEventListener("change", function(){ fromExample = false; });
+  });
+  refreshCount();
+  load("op", true);
+})();
+</script>
+
+</body></html>
